@@ -316,16 +316,36 @@ async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn install_addon(host: tauri::State<'_, Host>, wow: String) -> Result<String, String> {
+async fn install_addon(
+    app: tauri::AppHandle,
+    host: tauri::State<'_, Host>,
+    wow: String,
+) -> Result<String, String> {
+    let result = run_addon_installer(&host, wow).await;
+    telemetry::addon_install_finished(app, result.as_ref().err().map(|(code, _)| *code));
+    result.map_err(|(_, message)| message)
+}
+
+async fn run_addon_installer(
+    host: &Host,
+    wow: String,
+) -> Result<String, (telemetry::AddonInstallError, String)> {
+    use telemetry::AddonInstallError;
+
     if !Path::new(&wow).join("Wow.exe").is_file()
         && !Path::new(&wow).join("World of Warcraft.app").exists()
     {
-        return Err(
+        return Err((
+            AddonInstallError::InvalidGameFolder,
             "Choose the WoW client folder containing Wow.exe or World of Warcraft.app.".into(),
-        );
+        ));
     }
-    stop_host(&host).await?;
-    let mut command = host.command("scripts/install.ts")?;
+    stop_host(host)
+        .await
+        .map_err(|error| (AddonInstallError::BridgeStop, error))?;
+    let mut command = host
+        .command("scripts/install.ts")
+        .map_err(|error| (AddonInstallError::InstallerUnavailable, error))?;
     command
         .arg(wow)
         .stdin(Stdio::null())
@@ -333,13 +353,16 @@ async fn install_addon(host: tauri::State<'_, Host>, wow: String) -> Result<Stri
         .stderr(Stdio::piped());
     let output = tauri::async_runtime::spawn_blocking(move || command.output())
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| (AddonInstallError::InstallerLaunch, e.to_string()))?
+        .map_err(|e| (AddonInstallError::InstallerLaunch, e.to_string()))?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr)
-            .chars()
-            .take(1000)
-            .collect());
+        return Err((
+            AddonInstallError::InstallerFailed,
+            String::from_utf8_lossy(&output.stderr)
+                .chars()
+                .take(1000)
+                .collect(),
+        ));
     }
     Ok("Addon installed. Restart WoW after first installation; use /reload for updates.".into())
 }

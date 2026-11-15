@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { UsageTelemetry } from '../src/telemetry.ts';
+import { UsageTelemetry, type ChatErrorCode } from '../src/telemetry.ts';
 
 let directory: string;
 const installationId = randomUUID();
@@ -68,7 +68,7 @@ test('missing and corrupt preferences fail closed', async () => {
 test('the live native opt-out stops new events without restarting the bridge', async () => {
   await preference(true);
   const telemetry = createTelemetry('0.1.1-nightly.53.1');
-  telemetry.chat('hover', 'completed', 120.8);
+  telemetry.chat('hover', 'completed', 120.8, undefined, 0);
   await telemetry.drain();
   const event = events().find((event) => event.event === 'chat_completed');
   expect(event.distinct_id).toBe(installationId);
@@ -78,6 +78,7 @@ test('the live native opt-out stops new events without restarting the bridge', a
     channel: 'nightly',
     mode: 'hover',
     duration_ms: 121,
+    first_text_ms: 0,
   });
   expect(event.properties.$process_person_profile).toBe(false);
   const count = fetch.mock.calls.length;
@@ -88,11 +89,11 @@ test('the live native opt-out stops new events without restarting the bridge', a
   await preference(true);
   telemetry.chat('routine', 'completed', 10);
   await telemetry.drain();
-  expect(
-    events()
-      .filter((event) => event.event === 'chat_completed')
-      .at(-1).properties.mode,
-  ).toBe('routine');
+  const properties = events()
+    .filter((event) => event.event === 'chat_completed')
+    .at(-1).properties;
+  expect(properties.mode).toBe('routine');
+  expect(properties).not.toHaveProperty('first_text_ms');
 });
 
 test('tool telemetry drops private labels, inputs, results and custom tool names', async () => {
@@ -120,6 +121,32 @@ test('tool telemetry drops private labels, inputs, results and custom tool names
       .sort(),
   ).toEqual(['external_tool', 'query_character']);
   expect(JSON.stringify(events())).not.toMatch(/PRIVATE|Alice|my-private|callId/);
+});
+
+test('chat telemetry only sends allowlisted failure codes', async () => {
+  await preference(true);
+  const telemetry = createTelemetry();
+  telemetry.chat('chat', 'failed', 10, 'model_auth_failed');
+  telemetry.chat('hover', 'failed', 20, 'PRIVATE PROVIDER ERROR' as ChatErrorCode);
+  telemetry.chat('routine', 'timeout', 30);
+  telemetry.chat('chat', 'completed', 40, 'turn_stream_failed');
+  telemetry.chat('chat', 'cancelled', 50, 'turn_stream_failed');
+  telemetry.chat('chat', 'needs_input', 60);
+  await telemetry.drain();
+
+  const chats = events()
+    .filter((event) => event.event === 'chat_completed')
+    .map((event) => event.properties)
+    .sort((a, b) => a.duration_ms - b.duration_ms);
+  expect(chats.map(({ error_code }) => error_code)).toEqual([
+    'model_auth_failed',
+    'unknown',
+    'timeout',
+    undefined,
+    undefined,
+    undefined,
+  ]);
+  expect(JSON.stringify(chats)).not.toContain('PRIVATE PROVIDER ERROR');
 });
 
 test('addon polls are deduplicated and only valid versions are sent', async () => {
