@@ -26,7 +26,7 @@ export default function ProviderDetails() {
         to="/connections"
       >
         <Icon name="back" size={16} />
-        Back to Connections
+        Back to AI Providers
       </Link>
       <header className="mb-5 flex items-center gap-3">
         <ProviderLogo provider={id} />
