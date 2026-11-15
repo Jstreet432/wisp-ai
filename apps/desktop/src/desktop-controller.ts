@@ -76,7 +76,7 @@ export function desktopReadiness(
 ): 'loading' | 'update' | 'starting' | 'stopped' | 'account' | 'waiting' | 'ready' {
   const { loading, info, status, starting, connectionError } = state;
   if (loading) return 'loading';
-  if (info?.addonOutdated) return 'update';
+  if (info?.addonOutdated || info?.addonUpdateNotice === 'failed') return 'update';
   const serviceStarting = starting && !connectionError;
   if (!status?.ready) return serviceStarting || status ? 'starting' : 'stopped';
   if (!desktopConnected(state)) return 'account';
@@ -372,6 +372,12 @@ function createDesktopSession() {
           'Wisp stopped.',
         ),
       selectFolder: (wow: string) => update({ wow }),
+      dismissAddonReload: () => {
+        const { info } = getState();
+        if (info?.addonUpdateNotice === 'reload_required') {
+          update({ info: { ...info, addonUpdateNotice: null } });
+        }
+      },
       setConfirmation: (confirm: Confirmation | null) => update({ confirm }),
       setBusy: (busy: string) => update({ busy }),
       clearFeedback: () => update({ feedback: '' }),
