@@ -26,6 +26,7 @@ struct Host {
     data: PathBuf,
     payload: PathBuf,
     child: Mutex<Option<Child>>,
+    lifecycle: tauri::async_runtime::Mutex<()>,
     addon_notice: tauri::async_runtime::Mutex<Option<addon_update::Notice>>,
     client: reqwest::Client,
 }
@@ -41,6 +42,20 @@ fn hidden(command: &mut Command) {
 }
 
 impl Host {
+    fn child_running(&self) -> Result<bool, String> {
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| "Application state is unavailable.")?;
+        match child.as_mut() {
+            Some(process) => process
+                .try_wait()
+                .map(|status| status.is_none())
+                .map_err(|error| error.to_string()),
+            None => Ok(false),
+        }
+    }
+
     fn node(&self) -> PathBuf {
         let engine = self.payload.join("wisp-engine.exe");
         if engine.is_file() {
@@ -90,7 +105,7 @@ impl Host {
         let raw = tauri::async_runtime::spawn_blocking(move || fs::read(identity_path))
             .await
             .map_err(|e| e.to_string())?
-            .map_err(|_| "Start Wisp first.")?;
+            .map_err(|_| "The Wisp service is not running.")?;
         let identity: Value =
             serde_json::from_slice(&raw).map_err(|_| "Invalid bridge identity.")?;
         let port = identity["port"]
@@ -111,10 +126,10 @@ impl Host {
                 format!("http://127.0.0.1:{port}{route}"),
             )
             .bearer_auth(token)
-            .timeout(Duration::from_secs(if route == "/mcps/test" {
-                90
-            } else {
-                40
+            .timeout(Duration::from_secs(match route {
+                "/mcps/test" => 90,
+                "/status" | "/stop" => 3,
+                _ => 40,
             }));
         let response = if method == "GET" {
             request
@@ -184,59 +199,34 @@ async fn bridge_request(
     host.request(&method, &route, body).await
 }
 
-#[tauri::command]
-async fn desktop_info(
-    app: tauri::AppHandle,
-    host: tauri::State<'_, Host>,
-    telemetry: tauri::State<'_, telemetry::Telemetry>,
-) -> Result<Value, String> {
-    // Desktop reads this before starting the bridge. Serialize the pending update
-    // with manual installs and any repeated initialization requests.
-    let mut addon_notice = host.addon_notice.lock().await;
-    let pending = host.data.join(addon_update::PENDING_FILE);
-    let check_update =
-        cfg!(all(windows, not(debug_assertions))) && addon_notice.is_none() && pending.is_file();
+async fn addon_installation(host: &Host) -> Result<(Option<String>, Option<bool>), String> {
     let data = host.data.clone();
     let payload = host.payload.clone();
-    let (wow, mut addon_outdated, update_wow) = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let wow = fs::read(data.join("config.local.json"))
             .ok()
             .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
             .and_then(|config| config["wow"].as_str().map(str::to_owned));
-        let addon_outdated = wow.as_deref().and_then(|wow| {
+        let outdated = wow.as_deref().and_then(|folder| {
             addon_update::differs(
                 &payload.join("addon/WispAI"),
-                &Path::new(wow).join("Interface/AddOns/WispAI"),
+                &Path::new(folder).join("Interface/AddOns/WispAI"),
             )
             .ok()
         });
-        let update_wow = wow
-            .as_ref()
-            .filter(|wow| check_update && addon_update::candidate(Path::new(wow), addon_outdated))
-            .cloned();
-        (wow, addon_outdated, update_wow)
+        (wow, outdated)
     })
     .await
-    .map_err(|e| e.to_string())?;
-    if check_update {
-        if let Some(wow) = update_wow {
-            let result = run_addon_installer(&host, wow).await;
-            telemetry::addon_install_finished(app, result.as_ref().err().map(|(code, _)| *code));
-            if result.is_ok() {
-                addon_outdated = Some(false);
-                if addon_update::wow_running() {
-                    *addon_notice = Some(addon_update::Notice::ReloadRequired);
-                }
-            } else {
-                tracing::warn!(
-                    event = "addon.auto_update_failed",
-                    "Automatic addon update failed"
-                );
-                *addon_notice = Some(addon_update::Notice::Failed);
-            }
-        }
-        let _ = fs::remove_file(pending);
-    }
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_info(
+    host: tauri::State<'_, Host>,
+    telemetry: tauri::State<'_, telemetry::Telemetry>,
+) -> Result<Value, String> {
+    let (wow, addon_outdated) = addon_installation(&host).await?;
+    let addon_notice = *host.addon_notice.lock().await;
     Ok(json!({
         "wow": wow,
         "configured": wow.is_some(),
@@ -244,35 +234,89 @@ async fn desktop_info(
         "platform": std::env::consts::OS,
         "version": env!("CARGO_PKG_VERSION"),
         "addonOutdated": addon_outdated,
-        "addonUpdateNotice": *addon_notice,
+        "addonUpdateNotice": addon_notice,
         "telemetryEnabled": telemetry.enabled(),
     }))
 }
 
 #[tauri::command]
-async fn start_bridge(host: tauri::State<'_, Host>) -> Result<(), String> {
-    let _addon_install = host.addon_notice.lock().await;
-    if host.request("GET", "/status", json!({})).await.is_ok() {
-        return Ok(());
+async fn auto_update_addon(
+    app: tauri::AppHandle,
+    host: tauri::State<'_, Host>,
+) -> Result<Option<Value>, String> {
+    if !cfg!(all(windows, not(debug_assertions))) {
+        return Ok(None);
     }
-    if !host.data.join("config.local.json").is_file() {
-        return Err("Choose your WoW folder and install the addon first.".into());
+    let _operation = host.lifecycle.lock().await;
+    let pending = host.data.join(addon_update::PENDING_FILE);
+    if !pending.is_file() {
+        return Ok(None);
+    }
+    let (wow, mut outdated) = addon_installation(&host).await?;
+    let mut notice = None;
+    if let Some(folder) = wow.as_ref() {
+        if addon_update::candidate(Path::new(folder), outdated) {
+            let result = run_addon_installer(&host, folder.clone()).await;
+            telemetry::addon_install_finished(app, result.as_ref().err().map(|(code, _)| *code));
+            match result {
+                Ok(_) => {
+                    outdated = Some(false);
+                    if addon_update::wow_running() {
+                        notice = Some(addon_update::Notice::ReloadRequired);
+                    }
+                }
+                Err((_, error)) => {
+                    tracing::warn!(
+                        event = "addon.auto_update_failed",
+                        error = %error,
+                        "Automatic addon update failed"
+                    );
+                    notice = Some(addon_update::Notice::Failed);
+                }
+            }
+        } else if let Err(error) = resume_wow_transport(&host, None).await {
+            tracing::warn!(
+                event = "addon.transport_resume_failed",
+                error = %error,
+                "Could not resume communication with WoW after checking for an addon update"
+            );
+            notice = Some(addon_update::Notice::Failed);
+        }
+    }
+    *host.addon_notice.lock().await = notice;
+    let _ = fs::remove_file(pending);
+    Ok(Some(json!({
+        "wow": wow,
+        "addonOutdated": outdated,
+        "addonUpdateNotice": notice,
+    })))
+}
+
+#[tauri::command]
+async fn start_bridge(host: tauri::State<'_, Host>) -> Result<(), String> {
+    let _operation = host.lifecycle.lock().await;
+    start_host(&host).await
+}
+
+async fn start_host(host: &Host) -> Result<(), String> {
+    if host.child_running()? || host.request("GET", "/status", json!({})).await.is_ok() {
+        return Ok(());
     }
     let mut child = host
         .child
         .lock()
         .map_err(|_| "Application state is unavailable.")?;
-    if let Some(process) = child.as_mut() {
-        if process.try_wait().map_err(|e| e.to_string())?.is_none() {
-            return Ok(());
-        }
-    }
     let log = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(host.data.join("runtime/bridge.log"))
         .map_err(|e| e.to_string())?;
     let mut command = host.command("src/main.ts")?;
+    if cfg!(all(windows, not(debug_assertions)))
+        && host.data.join(addon_update::PENDING_FILE).is_file()
+    {
+        command.env("WISP_DEFER_WOW_TRANSPORT", "1");
+    }
     command
         .stdin(Stdio::null())
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
@@ -297,37 +341,46 @@ async fn start_bridge(host: tauri::State<'_, Host>) -> Result<(), String> {
 }
 
 async fn stop_host(host: &Host) -> Result<(), String> {
-    match host.request("POST", "/stop", json!({})).await {
-        Ok(_) => {
-            tracing::info!(
-                component = "desktop",
-                event = "bridge.stop_requested",
-                "Bridge accepted the stop request"
-            );
-            for _ in 0..50 {
-                if host.request("GET", "/status", json!({})).await.is_err() {
-                    break;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        match host.request("POST", "/stop", json!({})).await {
+            Ok(_) => break,
+            Err(error)
+                if error == "The Wisp service is not running."
+                    || error == "The Wisp bridge is not responding." =>
+            {
+                if !host.child_running()? {
+                    return Ok(());
                 }
-                tauri::async_runtime::spawn_blocking(|| {
-                    std::thread::sleep(Duration::from_millis(100))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                // The child may still be opening the desktop API.
+                wait_for_bridge(deadline).await?;
             }
-            Ok(())
+            Err(error) => return Err(error),
         }
-        Err(error)
-            if error == "Start Wisp first." || error == "The Wisp bridge is not responding." =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(error),
     }
+
+    tracing::info!(
+        component = "desktop",
+        event = "bridge.stop_requested",
+        "Bridge accepted the stop request"
+    );
+    // The listener closes before the child releases SQLite and Eve.
+    while host.child_running()? {
+        wait_for_bridge(deadline).await?;
+    }
+    while host.request("GET", "/status", json!({})).await.is_ok() {
+        wait_for_bridge(deadline).await?;
+    }
+    Ok(())
 }
 
-#[tauri::command]
-async fn stop_bridge(host: tauri::State<'_, Host>) -> Result<(), String> {
-    stop_host(&host).await
+async fn wait_for_bridge(deadline: std::time::Instant) -> Result<(), String> {
+    if std::time::Instant::now() >= deadline {
+        return Err("The Wisp service did not stop. See Diagnostics for details.".into());
+    }
+    tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_millis(100)))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -349,6 +402,7 @@ async fn install_addon(
     host: tauri::State<'_, Host>,
     wow: String,
 ) -> Result<String, String> {
+    let _operation = host.lifecycle.lock().await;
     let mut addon_notice = host.addon_notice.lock().await;
     let result = run_addon_installer(&host, wow).await;
     if result.is_ok() {
@@ -372,17 +426,42 @@ async fn run_addon_installer(
             "Choose the WoW client folder containing Wow.exe or World of Warcraft.app.".into(),
         ));
     }
-    stop_host(host)
-        .await
-        .map_err(|error| (AddonInstallError::BridgeStop, error))?;
     let mut command = host
         .command("scripts/install.ts")
         .map_err(|error| (AddonInstallError::InstallerUnavailable, error))?;
     command
-        .arg(wow)
+        .arg(&wow)
+        .arg("--skip-config")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    wait_for_service(host)
+        .await
+        .map_err(|error| (AddonInstallError::TransportPause, error))?;
+    host.request("POST", "/addon/transport", json!({"action": "pause"}))
+        .await
+        .map_err(|error| (AddonInstallError::TransportPause, error))?;
+
+    const MESSAGE: &str =
+        "Addon installed. Restart WoW after first installation; use /reload for updates.";
+    let result = match run_addon_install_command(command).await {
+        Ok(()) => resume_wow_transport(host, Some(&wow))
+            .await
+            .map_err(|error| (AddonInstallError::TransportResume, error)),
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        restore_wow_transport(host).await;
+    }
+    result.map(|()| MESSAGE.into())
+}
+
+async fn run_addon_install_command(
+    mut command: Command,
+) -> Result<(), (telemetry::AddonInstallError, String)> {
+    use telemetry::AddonInstallError;
+
     let output = tauri::async_runtime::spawn_blocking(move || command.output())
         .await
         .map_err(|e| (AddonInstallError::InstallerLaunch, e.to_string()))?
@@ -396,7 +475,46 @@ async fn run_addon_installer(
                 .collect(),
         ));
     }
-    Ok("Addon installed. Restart WoW after first installation; use /reload for updates.".into())
+    Ok(())
+}
+
+async fn wait_for_service(host: &Host) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        match host.request("GET", "/status", json!({})).await {
+            Ok(_) => return Ok(()),
+            Err(error) if !host.child_running()? || std::time::Instant::now() >= deadline => {
+                return Err(error);
+            }
+            Err(_) => {
+                tauri::async_runtime::spawn_blocking(|| {
+                    std::thread::sleep(Duration::from_millis(100))
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+}
+
+async fn resume_wow_transport(host: &Host, wow: Option<&str>) -> Result<(), String> {
+    wait_for_service(host).await?;
+    let body = match wow {
+        Some(folder) => json!({"action": "resume", "wow": folder}),
+        None => json!({"action": "resume"}),
+    };
+    host.request("POST", "/addon/transport", body).await?;
+    Ok(())
+}
+
+async fn restore_wow_transport(host: &Host) {
+    if let Err(error) = resume_wow_transport(host, None).await {
+        tracing::warn!(
+            event = "addon.transport_resume_failed",
+            error = %error,
+            "Could not restore the WoW connection after installation failed"
+        );
+    }
 }
 
 #[tauri::command]
@@ -450,9 +568,19 @@ fn read_logs(host: tauri::State<'_, Host>) -> String {
 
 #[tauri::command]
 async fn import_legacy(host: tauri::State<'_, Host>, source: String) -> Result<String, String> {
+    let _operation = host.lifecycle.lock().await;
     if host.data.join("config.local.json").exists() {
         return Err("Import is available before configuring this installation, to avoid overwriting your data.".into());
     }
+    stop_host(&host).await?;
+    let result = run_legacy_import(&host, source).await;
+    let restart = start_host(&host).await;
+    let message = result?;
+    restart?;
+    Ok(message)
+}
+
+async fn run_legacy_import(host: &Host, source: String) -> Result<String, String> {
     let mut command = host.command("scripts/migrate-desktop.ts")?;
     command
         .arg(source)
@@ -469,7 +597,7 @@ async fn import_legacy(host: tauri::State<'_, Host>, source: String) -> Result<S
             .take(1000)
             .collect());
     }
-    Ok("Imported your previous Wisp data. You can start Wisp now.".into())
+    Ok("Imported your previous Wisp data.".into())
 }
 
 fn prepare_update() -> Result<(), String> {
@@ -482,6 +610,7 @@ fn prepare_update() -> Result<(), String> {
         data,
         payload: PathBuf::new(),
         child: Mutex::new(None),
+        lifecycle: tauri::async_runtime::Mutex::new(()),
         addon_notice: Default::default(),
         client: reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -634,9 +763,9 @@ fn main() {
             updates::update_channel,
             bridge_request,
             desktop_info,
+            auto_update_addon,
             game_detection::detect_game_folders,
             start_bridge,
-            stop_bridge,
             pick_folder,
             install_addon,
             open_sign_in,
@@ -663,6 +792,7 @@ fn main() {
                 data,
                 payload,
                 child: Mutex::new(None),
+                lifecycle: tauri::async_runtime::Mutex::new(()),
                 addon_notice: Default::default(),
                 client: reqwest::Client::builder()
                     .redirect(reqwest::redirect::Policy::none())
@@ -696,6 +826,7 @@ fn main() {
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {
                             let host = app.state::<Host>();
+                            let _operation = host.lifecycle.lock().await;
                             match stop_host(&host).await {
                                 Ok(()) => app.exit(0),
                                 Err(error) => {
@@ -731,6 +862,7 @@ mod tests {
     #[test]
     fn desktop_routes_are_explicit() {
         assert!(permitted("GET", "/status"));
+        assert!(!permitted("POST", "/addon/transport"));
         assert!(permitted("POST", "/mcps/save"));
         assert!(permitted("POST", "/routines/action"));
         assert!(permitted("POST", "/routines/open"));

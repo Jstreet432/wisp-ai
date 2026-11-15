@@ -55,6 +55,7 @@ export interface BridgeOptions {
   vault?: SecretVault;
   client?: Pick<Client, 'sessions' | 'health' | 'info'>;
   startAgent?: typeof startEveProcess;
+  deferWowTransport?: boolean;
 }
 export async function startBridge(options: BridgeOptions = {}) {
   const resources = new RuntimeResources();
@@ -77,7 +78,6 @@ export async function startBridge(options: BridgeOptions = {}) {
     ]);
     const runtime = paths.runtime;
     const simulator = new Simulator(ROOT, runtime);
-    await prepareEngine(paths.agent, paths.engine);
     await mkdir(runtime, { recursive: true });
     const databaseFile = applicationDatabaseFile(runtime);
     const applicationDatabase = new ApplicationDatabase(databaseFile);
@@ -96,21 +96,32 @@ export async function startBridge(options: BridgeOptions = {}) {
         : [];
       return { status: 'available', entries: [...preferences, ...character] };
     }
-    let config = await readJson(
+    const configSchema = z.object({
+      wow: z.string().min(1).optional(),
+      // Earlier installers saved an empty string before model selection.
+      model: z.preprocess(
+        (value) => (value === '' ? undefined : value),
+        z.string().min(1).optional(),
+      ),
+      mcpConfig: z.string().min(1).optional(),
+    });
+    let config = await readJson<z.infer<typeof configSchema>>(
       paths.config,
-      z.object({
-        wow: z.string().min(1),
-        // Earlier installers saved an empty string before model selection.
-        model: z.preprocess(
-          (value) => (value === '' ? undefined : value),
-          z.string().min(1).optional(),
-        ),
-        mcpConfig: z.string().min(1).optional(),
-      }),
-      () => {
-        throw Error('Choose a WoW folder and install the addon first.');
-      },
+      configSchema,
+      () => ({}),
     );
+    let configWrite = Promise.resolve();
+    function updateConfig(patch: Partial<typeof config>) {
+      const write = configWrite
+        .catch(() => {})
+        .then(async () => {
+          const next = { ...config, ...patch };
+          await writeJson(paths.config, next);
+          config = next;
+        });
+      configWrite = write;
+      return write;
+    }
     const mcpFile = config.mcpConfig
       ? path.resolve(paths.dataRoot, config.mcpConfig)
       : path.join(runtime, 'mcp.json');
@@ -349,13 +360,62 @@ export async function startBridge(options: BridgeOptions = {}) {
         telemetry.gameConnectionStarted();
       }
     };
-    const transport = new DiskTransport(config.wow, receive, (error) =>
+    let transport: DiskTransport | undefined;
+    let transportWork = Promise.resolve();
+
+    function logTransportError(error: unknown) {
       logger.error(
         { event: 'transport.failed', error: errorMessage(error) },
         'Game transport failed',
-      ),
-    );
-    resources.defer(() => transport.stop());
+      );
+    }
+
+    function withTransport(work: () => Promise<void>) {
+      const operation = transportWork.catch(() => {}).then(work);
+      transportWork = operation;
+      return operation;
+    }
+
+    async function disconnectTransport() {
+      const previous = transport;
+      transport = undefined;
+      state.activeTransport = '';
+      state.firstReadyRevision = 0;
+      state.currentCharacterKey = undefined;
+      state.routinePresence = undefined;
+      state.memoryViewRequest = undefined;
+      pending.cancelAll('The connection to WoW changed. Try again after reconnecting.');
+      integrationState.reset();
+      snapshots.invalidate();
+      changed();
+      await previous?.stop();
+      await capabilitySettings.publish().catch(logTransportError);
+    }
+
+    async function connectTransport(wow: string | undefined, save = false) {
+      if (shutdownRequested || transport?.wow === wow) return;
+      await disconnectTransport();
+      if (!wow || !existsSync(path.join(wow, 'Interface/AddOns/WispAI/WispAI.toc'))) {
+        if (save) throw Error('The Wisp addon is missing from the selected WoW folder.');
+        return;
+      }
+      const next = new DiskTransport(
+        wow,
+        (packet) => {
+          if (transport === next) receive(packet);
+        },
+        logTransportError,
+      );
+      transport = next;
+      try {
+        await next.start();
+        if (save) await updateConfig({ wow });
+      } catch (error) {
+        await disconnectTransport();
+        throw error;
+      }
+    }
+    resources.defer(() => withTransport(disconnectTransport));
     const server = createServer(
       createAgentHandler({
         logger,
@@ -390,12 +450,11 @@ export async function startBridge(options: BridgeOptions = {}) {
     });
     const agentOrigin = 'http://127.0.0.1:' + (server.address() as { port: number }).port;
     await writeFile(path.join(runtime, 'bridge.pid'), String(process.pid));
-    await transport.start();
     const eveLog = await import('node:fs').then((fs) =>
       fs.openSync(path.join(runtime, 'eve.log'), 'a'),
     );
     resources.defer(() => closeSync(eveLog));
-    function startEve() {
+    function spawnEve() {
       return (options.startAgent || startEveProcess)({
         root: paths.engine,
         logFile: eveLog,
@@ -420,12 +479,41 @@ export async function startBridge(options: BridgeOptions = {}) {
         },
       });
     }
-    let eve = startEve();
-    resources.defer(() => killEve());
+    let eve: ReturnType<typeof spawnEve> | undefined;
+    let enginePrepared = false;
+    function startEve() {
+      if (!enginePrepared) return;
+      try {
+        eve = spawnEve();
+      } catch (error) {
+        logger.error(
+          { event: 'eve.spawn_failed', error: errorMessage(error) },
+          'Could not start Eve',
+        );
+      }
+    }
     async function killEve() {
-      await stopEveProcess(eve);
+      if (eve) {
+        await stopEveProcess(eve);
+        eve = undefined;
+      }
       eveReady = false;
     }
+    const engineStartup = prepareEngine(paths.agent, paths.engine)
+      .then(() => {
+        enginePrepared = true;
+        if (!shutdownRequested) startEve();
+      })
+      .catch((error) => {
+        logger.error(
+          { event: 'eve.prepare_failed', error: errorMessage(error) },
+          'Could not prepare Eve',
+        );
+      });
+    resources.defer(async () => {
+      await engineStartup;
+      await killEve();
+    });
     let accountBusy = false;
     let accountWork: Promise<unknown> | undefined;
     resources.defer(async () => {
@@ -448,40 +536,43 @@ export async function startBridge(options: BridgeOptions = {}) {
         }
       }
     }
-    const health = setInterval(
-      () =>
-        void client
-          .health()
-          .then(async () => {
-            if (!eveReady) {
-              contextWindowTokens = undefined;
-              try {
-                const info = await client.info();
-                const window = info.agent.model?.contextWindowTokens;
-                if (typeof window === 'number' && Number.isSafeInteger(window) && window > 0) {
-                  contextWindowTokens = window;
-                }
-              } catch {
-                // Unknown capacity is displayed as unknown, never a made-up limit.
+    const health = setInterval(() => {
+      if (!eve) return;
+      const current = eve;
+      void client
+        .health()
+        .then(async () => {
+          if (eve === current && !eveReady) {
+            let windowTokens: number | undefined;
+            try {
+              const info = await client.info();
+              const window = info.agent.model?.contextWindowTokens;
+              if (typeof window === 'number' && Number.isSafeInteger(window) && window > 0) {
+                windowTokens = window;
               }
-              eveReady = true;
-              changed();
-              logger.info({ event: 'eve.ready' }, 'Eve ready');
+            } catch {
+              // Unknown capacity is displayed as unknown, never a made-up limit.
             }
-          })
-          .catch(() => {
-            if (eveReady) {
-              eveReady = false;
-              changed();
-            }
-          }),
-      3000,
-    );
+            if (eve !== current || current.exitCode !== null || current.signalCode !== null) return;
+            contextWindowTokens = windowTokens;
+            eveReady = true;
+            changed();
+            logger.info({ event: 'eve.ready' }, 'Eve ready');
+          }
+        })
+        .catch(() => {
+          if (eve === current && eveReady) {
+            eveReady = false;
+            changed();
+          }
+        });
+    }, 3000);
     resources.defer(() => clearInterval(health));
     function gameConnected() {
       return Boolean(
         state.activeTransport &&
         state.firstReadyRevision &&
+        transport &&
         transport.peerRevision >= state.firstReadyRevision,
       );
     }
@@ -511,62 +602,88 @@ export async function startBridge(options: BridgeOptions = {}) {
         routineRuns: routineStore.history({ includeSilent: false, limit: 200 }),
       };
     }
+    const handleDesktopRequest = createDesktopHandler({
+      auth,
+      connections,
+      webSearch,
+      capabilitySettings,
+      mcpManager,
+      panelStore,
+      routineStore,
+      accountOperation,
+      readSimulationCharacter,
+      setCapability,
+      refreshMcpCatalog,
+      changed,
+      getStatus: desktopStatus,
+      getChats: () => state.chats,
+      currentCharacterKey: () => state.currentCharacterKey,
+      sendPanelCommand: (command) => {
+        state.panelCommand = command;
+      },
+      openRoutine: (id) => {
+        state.activeChat = id;
+        state.routineCommand = { seq: Date.now(), id };
+      },
+      updateModel: async (model) => {
+        if (shutdownRequested) {
+          throw Error('Wisp is stopping.');
+        }
+        await updateConfig({ model });
+        if (!enginePrepared) return;
+        await killEve();
+        if (shutdownRequested) {
+          return;
+        }
+        startEve();
+        changed();
+      },
+      requestStop: () => {
+        shutdownRequested = true;
+        setTimeout(
+          () =>
+            void stop().catch((error) =>
+              logger.error(
+                { event: 'bridge.shutdown_failed', error: errorMessage(error) },
+                'Bridge shutdown failed',
+              ),
+            ),
+          200,
+        );
+      },
+    });
     const desktopServer = await startDesktopServer(
       runtime,
-      createDesktopHandler({
-        auth,
-        connections,
-        webSearch,
-        capabilitySettings,
-        mcpManager,
-        panelStore,
-        routineStore,
-        accountOperation,
-        readSimulationCharacter,
-        setCapability,
-        refreshMcpCatalog,
-        changed,
-        getStatus: desktopStatus,
-        getChats: () => state.chats,
-        currentCharacterKey: () => state.currentCharacterKey,
-        sendPanelCommand: (command) => {
-          state.panelCommand = command;
-        },
-        openRoutine: (id) => {
-          state.activeChat = id;
-          state.routineCommand = { seq: Date.now(), id };
-        },
-        updateModel: async (model) => {
-          if (shutdownRequested) {
-            throw Error('Wisp is stopping.');
-          }
-          const updated = { ...config, model };
-          await writeJson(paths.config, updated);
-          config = updated;
-          await killEve();
-          if (shutdownRequested) {
-            return;
-          }
-          eve = startEve();
-          changed();
-        },
-        requestStop: () => {
-          shutdownRequested = true;
-          setTimeout(
-            () =>
-              void stop().catch((error) =>
-                logger.error(
-                  { event: 'bridge.shutdown_failed', error: errorMessage(error) },
-                  'Bridge shutdown failed',
-                ),
-              ),
-            200,
-          );
-        },
-      }),
+      async (method, route, body) => {
+        if (method === 'POST' && route === '/addon/transport') {
+          const input = z
+            .discriminatedUnion('action', [
+              z.object({ action: z.literal('pause') }),
+              z.object({ action: z.literal('resume'), wow: z.string().min(1).optional() }),
+            ])
+            .parse(body);
+          await withTransport(async () => {
+            if (shutdownRequested) throw Error('Wisp is stopping.');
+            if (input.action === 'pause') {
+              if (state.chats.some((chat) => chat.status === 'working')) {
+                throw Error('Wait for the active turn before installing the addon.');
+              }
+              await disconnectTransport();
+            } else {
+              await connectTransport(input.wow ?? config.wow, input.wow !== undefined);
+            }
+          });
+          return { ok: true };
+        }
+        return handleDesktopRequest(method, route, body);
+      },
       options.desktopPort,
     );
     resources.defer(() => closeServer(desktopServer));
+    const transportStartup =
+      options.deferWowTransport || process.env.WISP_DEFER_WOW_TRANSPORT === '1'
+        ? Promise.resolve()
+        : withTransport(() => connectTransport(config.wow)).catch(logTransportError);
     const integrationHealth = setInterval(() => {
       const before = JSON.stringify(capabilitySettings.snapshot());
       integrationState.refresh();
@@ -584,7 +701,7 @@ export async function startBridge(options: BridgeOptions = {}) {
     }, 30000);
     resources.defer(() => clearInterval(integrationHealth));
     function publishSnapshot() {
-      if (!dirty || !state.activeTransport) {
+      if (!transport || !dirty || !state.activeTransport) {
         return;
       }
       dirty = false;
@@ -675,6 +792,7 @@ export async function startBridge(options: BridgeOptions = {}) {
       state.chats.forEach(run.interrupt);
       return resources.close();
     }
+    await Promise.all([engineStartup, transportStartup]);
     return { state, receive, stop };
   } catch (error) {
     await resources

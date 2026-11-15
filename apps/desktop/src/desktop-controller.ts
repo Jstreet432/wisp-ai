@@ -38,8 +38,10 @@ const onboardingKey = 'wisp:onboarding:v1';
 
 function resumeOnboarding(configured: boolean) {
   try {
-    if (!configured) localStorage.setItem(onboardingKey, 'pending');
-    return !configured || localStorage.getItem(onboardingKey) === 'pending';
+    const saved = localStorage.getItem(onboardingKey);
+    const pending = saved === 'pending' || (!configured && saved !== 'complete');
+    if (pending) localStorage.setItem(onboardingKey, 'pending');
+    return pending;
   } catch {
     return !configured;
   }
@@ -73,13 +75,23 @@ export const desktopLocked = (state: DesktopState) => !!state.busy || desktopAct
 
 export function desktopReadiness(
   state: DesktopState,
-): 'loading' | 'update' | 'starting' | 'stopped' | 'account' | 'waiting' | 'ready' {
-  const { loading, info, status, starting, connectionError } = state;
+):
+  | 'loading'
+  | 'update'
+  | 'starting'
+  | 'unavailable'
+  | 'setup'
+  | 'account'
+  | 'agent'
+  | 'waiting'
+  | 'ready' {
+  const { loading, info, status, starting } = state;
   if (loading) return 'loading';
   if (info?.addonOutdated || info?.addonUpdateNotice === 'failed') return 'update';
-  const serviceStarting = starting && !connectionError;
-  if (!status?.ready) return serviceStarting || status ? 'starting' : 'stopped';
+  if (!status) return starting ? 'starting' : 'unavailable';
+  if (!info?.configured) return 'setup';
   if (!desktopConnected(state)) return 'account';
+  if (!status.ready) return 'agent';
   return status.gameConnected ? 'ready' : 'waiting';
 }
 
@@ -88,6 +100,7 @@ function createDesktopSession() {
   let disposed = false;
   let refreshInFlight: Promise<void> | undefined;
   let loadedAccount = '';
+  let startupDeadline = 0;
   let stopBridgeLifecycle: (() => void) | undefined;
 
   function update(patch: Partial<DesktopState>) {
@@ -112,12 +125,7 @@ function createDesktopSession() {
     try {
       const status = await request<Status>('/status');
       if (disposed) return;
-      const { starting } = getState();
-      update({
-        status,
-        connectionError: '',
-        starting: starting && !status.ready,
-      });
+      update({ status, connectionError: '', starting: false });
       const catalogRevision = JSON.stringify([
         status.auth.activeId,
         status.auth.status,
@@ -134,7 +142,13 @@ function createDesktopSession() {
         }
       }
     } catch (error) {
-      update({ status: null, connectionError: String(error).replace(/^Error: /, '') });
+      loadedAccount = '';
+      const starting = getState().starting && Date.now() < startupDeadline;
+      update({
+        status: null,
+        starting,
+        connectionError: starting ? '' : String(error).replace(/^Error: /, ''),
+      });
     } finally {
       update({ loading: false });
     }
@@ -187,19 +201,20 @@ function createDesktopSession() {
     if (folder) update({ wow: folder });
   }
 
+  function expectService() {
+    startupDeadline = Date.now() + 15_000;
+    update({ starting: true, connectionError: '' });
+  }
+
   async function launchBridge() {
     if (disposed) return;
-    update({ starting: true });
+    expectService();
     try {
       await desktop('start_bridge');
     } catch (error) {
       update({ starting: false });
       throw error;
     }
-  }
-
-  async function start() {
-    await work('Starting Wisp', launchBridge, 'Wisp is starting.');
   }
 
   async function install() {
@@ -209,7 +224,6 @@ function createDesktopSession() {
       async () => {
         await desktop('install_addon', { wow: getState().wow });
         update({ info: await desktop<DesktopInfo>('desktop_info') });
-        await launchBridge();
       },
       'Addon installed. Restart WoW after the first installation; use /reload for updates.',
       'installation',
@@ -223,11 +237,12 @@ function createDesktopSession() {
       'Importing previous installation',
       async () => {
         await desktop('import_legacy', { source });
+        expectService();
         const info = await desktop<DesktopInfo>('desktop_info');
+        loadedAccount = '';
         update({ info, wow: info.wow || '' });
-        await launchBridge();
       },
-      'Imported chats, memory and protected credentials. Wisp is starting.',
+      'Imported chats, memory and protected credentials.',
     );
   }
 
@@ -332,6 +347,10 @@ function createDesktopSession() {
           update({ info, wow: info.wow || '', onboarding: resumeOnboarding(info.configured) });
           if (!info.configured) void searchInstallations();
         },
+        onAddonUpdate({ wow, ...addon }) {
+          const { info } = getState();
+          if (info && info.wow === wow) update({ info: { ...info, ...addon } });
+        },
         launchBridge,
         refresh,
         onError: (feedback) => update({ failed: true, feedback }),
@@ -345,12 +364,11 @@ function createDesktopSession() {
       loadModels,
       signIn,
       searchInstallations,
-      start,
       install,
       importPrevious,
       finishOnboarding() {
         try {
-          localStorage.removeItem(onboardingKey);
+          localStorage.setItem(onboardingKey, 'complete');
         } catch {
           // Setup can still finish when webview storage is unavailable.
         }
@@ -362,15 +380,6 @@ function createDesktopSession() {
       removeMcp,
       testMcp,
       chooseFolder: () => work('Choosing folder', pickFolder, undefined, 'folder-picker'),
-      stop: () =>
-        work(
-          'Stopping Wisp',
-          async () => {
-            await desktop('stop_bridge');
-            update({ starting: false });
-          },
-          'Wisp stopped.',
-        ),
       selectFolder: (wow: string) => update({ wow }),
       dismissAddonReload: () => {
         const { info } = getState();
