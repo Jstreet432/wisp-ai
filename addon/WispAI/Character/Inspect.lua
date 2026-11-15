@@ -49,20 +49,90 @@ local function itemDetails(id)
         tooltip = tooltip(link),
     }
 end
+
+local function readPublic(fn, ...)
+    if type(fn) ~= "function" then
+        return
+    end
+    local ok, a, b, c = pcall(fn, ...)
+    if
+        ok and (not issecretvalue or not (issecretvalue(a) or issecretvalue(b) or issecretvalue(c)))
+    then
+        return a, b, c
+    end
+end
+
+local function cooldownReading(remaining)
+    if not ns.Shared.Numbers.IsFinite(remaining) or remaining < 0 then
+        return { status = "unavailable", state = "unknown" }
+    end
+    return {
+        status = "available",
+        state = remaining == 0 and "no_active_cooldown" or "cooldown",
+        remainingSeconds = remaining,
+    }
+end
+
+local function itemCooldown(id)
+    local get = C_Container and C_Container.GetItemCooldown
+    local expectsBoolean = type(get) ~= "function"
+    if expectsBoolean then
+        get = C_Item and C_Item.GetItemCooldown
+    end
+    local start, duration, enabled = readPublic(get, id)
+    local now = readPublic(GetTime)
+    local isFinite = ns.Shared.Numbers.IsFinite
+    -- The container API reports 1 for enabled; the item API reports true.
+    if
+        enabled ~= (expectsBoolean and true or 1)
+        or not (isFinite(start) and isFinite(duration) and isFinite(now))
+        or start < 0
+        or duration < 0
+        or start > now
+    then
+        return cooldownReading()
+    end
+    return cooldownReading(math.max(0, duration - (now - start)))
+end
+
+local function spellCooldown(id)
+    -- Ignore the global cooldown so it cannot appear as the spell's own timer.
+    local duration = readPublic(C_Spell.GetSpellCooldownDuration, id, true)
+    if
+        (type(duration) == "userdata" or type(duration) == "table")
+        and readPublic(duration.HasSecretValues, duration) == false
+    then
+        return cooldownReading(readPublic(duration.GetRemainingDuration, duration))
+    end
+    return cooldownReading()
+end
+
 function inspectors.reference(args)
     if args.kind == "item" then
-        return itemDetails(args.id)
+        if args.includeCooldown ~= true then
+            return itemDetails(args.id)
+        end
+        local ok, details = pcall(itemDetails, args.id)
+        if not ok then
+            details = { id = args.id, status = "unavailable" }
+        end
+        details.cooldown = itemCooldown(args.id)
+        return details
     end
     if args.kind == "spell" or args.kind == "talent" then
         assert(C_Spell and C_Spell.GetSpellInfo, "Spell API is unavailable")
         local info = C_Spell.GetSpellInfo(args.id)
         assert(info, "Spell data is not available for this ID")
-        return {
+        local details = {
             id = args.id,
             info = info,
             description = C_Spell.GetSpellDescription and C_Spell.GetSpellDescription(args.id),
             tooltip = tooltip("spell:" .. args.id),
         }
+        if args.kind == "spell" and args.includeCooldown == true then
+            details.cooldown = spellCooldown(args.id)
+        end
+        return details
     end
     assert(C_QuestLog, "Quest API is unavailable")
     local title = C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(args.id)
@@ -100,6 +170,17 @@ function inspectors.target()
         note = "Target coordinates and fight difficulty were not inferred.",
     }
 end
+
+function inspectors.hearthstone()
+    local name = readPublic(GetBindLocation)
+    if type(name) == "string" and name:find("%S") then
+        return {
+            bind = { status = "available", name = ns.Shared.Text.TruncateUtf8Bytes(name, 180) },
+        }
+    end
+    return { bind = { status = "unavailable" } }
+end
+
 local trainerOpen, auctionOpen = false, false
 local inspectionEvents = CreateFrame("Frame")
 for _, event in ipairs({

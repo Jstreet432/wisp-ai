@@ -144,6 +144,7 @@ export const toolDescriptions: Record<string, [string, string]> = {
     'Find flight points on the world map and read routes from the flight master maps your character has opened.',
   ],
   inspect_map: ['Read maps', 'Look up maps and read your current map pin.'],
+  inspect_hearthstone: ['Read Hearthstone bind', 'Read where your Hearthstone takes you.'],
   set_map_waypoint: [
     'Mark map',
     'Place a map pin and show directions when navigation is available.',

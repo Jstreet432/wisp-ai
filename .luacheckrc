@@ -42,6 +42,7 @@ read_globals = {
     "GetAuctionItemInfo",
     "GetBinding",
     "GetBindingAction",
+    "GetBindLocation",
     "GetBindingKey",
     "GetBuildInfo",
     "GetCVar",
@@ -121,6 +122,7 @@ read_globals = {
     "date",
     "debugprofilestop",
     "hooksecurefunc",
+    "issecretvalue",
     "strsplit",
     "time",
 }

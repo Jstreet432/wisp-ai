@@ -12,6 +12,7 @@ import chain from '../apps/agent/agent/tools/questie__get_quest_chain.ts';
 import object from '../apps/agent/agent/tools/questie__find_object_locations.ts';
 import stored from '../apps/agent/agent/tools/syndicator__find_item.ts';
 import prices from '../apps/agent/agent/tools/auctionator__get_item_prices.ts';
+import hearthstone from '../apps/agent/agent/tools/wow__inspect_hearthstone.ts';
 import {
   questChainInput,
   storedItemInput,
@@ -20,6 +21,22 @@ import {
   inspectionSchema,
 } from '@wisp/protocol/game-inspection';
 import { integrationContext } from '@wisp/protocol/capabilities';
+
+test('item and spell references can opt into cooldown readings', () => {
+  const args = { kind: 'item', id: 3827 };
+  assert.deepEqual(inspectionSchema.parse({ kind: 'reference', args }), {
+    kind: 'reference',
+    args,
+  });
+  for (const kind of ['item', 'spell']) {
+    const request = { kind: 'reference', args: { ...args, kind, includeCooldown: true } };
+    assert.deepEqual(inspectionSchema.parse(request), request);
+  }
+  for (const kind of ['quest', 'talent']) {
+    const request = { kind: 'reference', args: { ...args, kind, includeCooldown: true } };
+    assert.equal(inspectionSchema.safeParse(request).success, false);
+  }
+});
 
 test('actual new Eve definitions follow per-API readiness, parent switches and expiration', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'wisp-addon-tools-'));
@@ -45,12 +62,14 @@ test('actual new Eve definitions follow per-API readiness, parent switches and e
       auctionator: { status: 'partial' },
     };
     await settings.publish();
+    assert.equal(await resolve(hearthstone), null);
     for (const definition of [quest, chain, object, stored, prices]) {
       assert.equal(await resolve(definition), null);
     }
     assert.equal(await resolve(flightPaths), null);
     assert.ok(state.receive(report));
     await settings.publish();
+    assert.ok(await resolve(hearthstone));
     for (const definition of [quest, chain, stored, prices]) {
       assert.ok(await resolve(definition));
     }
@@ -83,6 +102,7 @@ test('actual new Eve definitions follow per-API readiness, parent switches and e
     assert.equal(await resolve(prices), null);
     state.reset();
     await settings.publish();
+    assert.equal(await resolve(hearthstone), null);
     assert.equal(await resolve(chain), null);
     assert.equal(await resolve(flightPaths), null);
   } finally {
@@ -102,6 +122,11 @@ test('new inspection inputs bound work and reject executable or cross-version ar
   assert.equal(itemPricesInput.safeParse({ itemIds: Array(21).fill(1) }).success, false);
   assert.equal(objectLocationsInput.safeParse({}).success, false);
   assert.equal(objectLocationsInput.safeParse({ objectId: 99, mapId: 1454 }).success, true);
+  assert.equal(inspectionSchema.safeParse({ kind: 'hearthstone', args: {} }).success, true);
+  assert.equal(
+    inspectionSchema.safeParse({ kind: 'hearthstone', args: { itemId: 1 } }).success,
+    false,
+  );
 });
 
 test('flight path inspection trims destination names and bounds the result limit', () => {

@@ -68,10 +68,19 @@ export const storedItemInput = z.strictObject({
 export const itemPricesInput = z.strictObject({
   itemIds: z.array(z.number().int().positive()).min(1).max(20),
 });
-export const referenceInput = z.object({
-  kind: z.enum(['item', 'spell', 'quest', 'talent']),
-  id: z.number().int().positive(),
-});
+export const referenceInput = z
+  .object({
+    kind: z.enum(['item', 'spell', 'quest', 'talent']),
+    id: z.number().int().positive(),
+    includeCooldown: z
+      .boolean()
+      .optional()
+      .describe('Read the current timer for an item or spell.'),
+  })
+  .refine(
+    (args) => !args.includeCooldown || args.kind === 'item' || args.kind === 'spell',
+    'Cooldowns require kind=item or kind=spell',
+  );
 export const progressionInput = z.object({
   questIds: z.array(z.number().int().positive()).max(40).default([]),
   factionIds: z.array(z.number().int().positive()).max(20).default([]),
@@ -165,6 +174,7 @@ export const inspectionSchema = z.discriminatedUnion('kind', [
       query: z.string().min(1).max(80).optional(),
     }),
   }),
+  z.object({ kind: z.literal('hearthstone'), args: z.strictObject({}) }),
   ...(['target', 'trainer', 'resources'] as const).map((kind) =>
     z.object({ kind: z.literal(kind), args: z.object({}) }),
   ),

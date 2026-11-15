@@ -22,6 +22,156 @@ local function setup(env)
     helper.addon("Actions/Game.lua", env)
 end
 
+it("reads an item cooldown only when requested and keeps the usual item details", function()
+    local env = helper.env()
+    setup(env)
+    env.C_Item = {
+        GetItemInfo = function()
+            return "Mana Potion", "item:3827"
+        end,
+    }
+    env.GetTime = function()
+        return 110
+    end
+    local cooldownId
+    env.C_Container = {
+        GetItemCooldown = function(itemId)
+            cooldownId = itemId
+            return 100, 40, 1
+        end,
+    }
+    local request = { kind = "reference", args = { kind = "item", id = 3827 } }
+    local details = env.ns.Character.Inspect(request).data
+    assert.equals("Mana Potion", details.name)
+    assert.is_nil(details.cooldown)
+    assert.is_nil(cooldownId)
+
+    request.args.includeCooldown = true
+    details = env.ns.Character.Inspect(request).data
+    assert.equals(3827, cooldownId)
+    assert.equals("Mana Potion", details.name)
+    assert.same({
+        status = "available",
+        state = "cooldown",
+        remainingSeconds = 30,
+    }, details.cooldown)
+
+    request.args.id = 6948
+    env.C_Container = nil
+    env.C_Item.GetItemInfo = function()
+        return nil
+    end
+    env.C_Item.GetItemCooldown = function(itemId)
+        cooldownId = itemId
+        return 0, 0, true
+    end
+    details = env.ns.Character.Inspect(request).data
+    assert.equals(6948, cooldownId)
+    assert.equals("loading", details.status)
+    assert.same({
+        status = "available",
+        state = "no_active_cooldown",
+        remainingSeconds = 0,
+    }, details.cooldown)
+end)
+
+it("keeps restricted or disabled item timers unknown", function()
+    local env = helper.env()
+    setup(env)
+    local restricted = {}
+    env.issecretvalue = function(value)
+        return value == restricted
+    end
+    env.GetTime = function()
+        return 110
+    end
+    env.C_Item = {
+        GetItemCooldown = function()
+            return restricted, 0, true
+        end,
+    }
+    local request = {
+        kind = "reference",
+        args = { kind = "item", id = 3827, includeCooldown = true },
+    }
+    local unknown = { status = "unavailable", state = "unknown" }
+    local details = env.ns.Character.Inspect(request).data
+    assert.equals("unavailable", details.status)
+    assert.same(unknown, details.cooldown)
+    env.C_Item.GetItemCooldown = function()
+        return 0, 0, false
+    end
+    assert.same(unknown, env.ns.Character.Inspect(request).data.cooldown)
+end)
+
+it("reads a spell cooldown on demand without counting the global cooldown", function()
+    local env = helper.env()
+    setup(env)
+    local calls, remainingReads, remaining, secret = 0, 0, 12.5, false
+    local duration = {
+        HasSecretValues = function()
+            return secret
+        end,
+        GetRemainingDuration = function()
+            remainingReads = remainingReads + 1
+            return remaining
+        end,
+    }
+    env.C_Spell = {
+        GetSpellInfo = function()
+            return { name = "Blink" }
+        end,
+        GetSpellCooldownDuration = function(id, ignoreGCD)
+            calls = calls + 1
+            assert.equals(1953, id)
+            assert.is_true(ignoreGCD)
+            return duration
+        end,
+    }
+    local request = { kind = "reference", args = { kind = "spell", id = 1953 } }
+    local details = env.ns.Character.Inspect(request).data
+    assert.is_nil(details.cooldown)
+    assert.equals(0, calls)
+
+    request.args.includeCooldown = true
+    details = env.ns.Character.Inspect(request).data
+    assert.equals("Blink", details.info.name)
+    assert.same({
+        status = "available",
+        state = "cooldown",
+        remainingSeconds = 12.5,
+    }, details.cooldown)
+
+    remaining = 0
+    assert.same({
+        status = "available",
+        state = "no_active_cooldown",
+        remainingSeconds = 0,
+    }, env.ns.Character.Inspect(request).data.cooldown)
+
+    secret = true
+    local unknown = { status = "unavailable", state = "unknown" }
+    assert.same(unknown, env.ns.Character.Inspect(request).data.cooldown)
+    assert.equals(2, remainingReads)
+    env.C_Spell.GetSpellCooldownDuration = nil
+    assert.same(unknown, env.ns.Character.Inspect(request).data.cooldown)
+end)
+
+it("reads just the localized Hearthstone bind without inspecting the item", function()
+    local env = helper.env()
+    setup(env)
+    local name = "Villa Dorada"
+    env.GetBindLocation = function()
+        return name
+    end
+    local request = { kind = "hearthstone" }
+    assert.same({
+        bind = { status = "available", name = name },
+    }, env.ns.Character.Inspect(request).data)
+    name = " "
+    assert.same({ bind = { status = "unavailable" } }, env.ns.Character.Inspect(request).data)
+end)
+
 it(
     "turn snapshots revalidate quests but send an unchanged log only until its revision is acknowledged",
     function()
