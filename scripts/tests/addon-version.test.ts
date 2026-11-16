@@ -38,6 +38,7 @@ test('release patch counts addon and helper changes from the current base versio
 
     await commit('addon/WispAI/Core.lua', 'updated addon');
     expect(addonReleaseVersion(root)).toBe('1.0.1');
+    git('tag', 'v0.1.3');
 
     git('switch', '-c', 'helpers');
     await commit('packages/protocol/src/addon-helpers.ts', 'first helper change');
@@ -45,6 +46,7 @@ test('release patch counts addon and helper changes from the current base versio
     git('switch', 'main');
     git('merge', '--no-ff', '-m', 'Update addon helpers', 'helpers');
     expect(addonReleaseVersion(root)).toBe('1.0.2');
+    expect(addonReleaseVersion(root, 'refs/tags/v0.1.3')).toBe('1.0.1');
 
     git('tag', 'v0.1.4');
     git('switch', '--detach', 'v0.1.4');

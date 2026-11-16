@@ -6,7 +6,7 @@ const versioningStart = 'scripts/addon-release-version.ts';
 const addonToc = 'addon/WispAI/WispAI.toc';
 const addonInputs = ['addon/WispAI', 'packages/protocol/src/addon-helpers.ts'];
 
-export function addonReleaseVersion(root: string): string {
+export function addonReleaseVersion(root: string, ref = 'HEAD'): string {
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
   if (git('rev-parse', '--is-shallow-repository') === 'true') {
@@ -18,6 +18,7 @@ export function addonReleaseVersion(root: string): string {
     '--diff-filter=A',
     '-1',
     '--format=%H',
+    ref,
     '--',
     versioningStart,
   );
@@ -25,7 +26,7 @@ export function addonReleaseVersion(root: string): string {
     throw Error('Addon release version requires a commit that includes the versioning script.');
   }
   const baseAt = (commit: string) => addonVersionFromToc(git('show', `${commit}:${addonToc}`));
-  const base = baseAt('HEAD');
+  const base = baseAt(ref);
   const versionLine = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.0$/.exec(base ?? '');
   if (!versionLine) {
     throw Error(`Set the addon base version in ${addonToc} to MAJOR.MINOR.0.`);
@@ -36,7 +37,7 @@ export function addonReleaseVersion(root: string): string {
     '--first-parent',
     '--diff-filter=AM',
     '--format=%H',
-    `${start}..HEAD`,
+    `${start}..${ref}`,
     '--',
     addonToc,
   )
@@ -53,7 +54,7 @@ export function addonReleaseVersion(root: string): string {
     'rev-list',
     '--first-parent',
     '--count',
-    `${baseCommit}..HEAD`,
+    `${baseCommit}..${ref}`,
     '--',
     ...addonInputs,
   );
