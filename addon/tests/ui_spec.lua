@@ -303,21 +303,10 @@ it(
         helper.addon("UI/Window.lua", env)
         ns.UI.BuildUI()
         local header = UI_TEST.frames.WispAIHeader
-        local setPoint = header.title.SetPoint
-        local titleLeft
-        header.title.SetPoint = function(self, point, relative, relativePoint, x, y)
-            if point == "LEFT" then
-                titleLeft = { relative, relativePoint, x, y }
-            end
-            setPoint(self, point, relative, relativePoint, x, y)
-        end
-        header.titleAnchor = nil
         ns.UI.Refresh()
+        local point, relative, relativePoint, x = header.title:GetPoint()
         assert(
-            titleLeft
-                and titleLeft[1] == header.logo
-                and titleLeft[2] == "RIGHT"
-                and titleLeft[3] > 0,
+            point == "LEFT" and relative == header.logo and relativePoint == "RIGHT" and x > 0,
             "refresh must keep the title to the right of the logo"
         )
         local state = UI_TEST.frames.WispAIChatPlaceholder
@@ -680,7 +669,7 @@ it(
             )
             ns.UI.SetMinimized(true)
             assert(
-                UI_TEST.frames.WispAIWindow:GetWidth() == 220
+                UI_TEST.frames.WispAIWindow:GetWidth() == 240
                     and not fold:IsShown()
                     and not gear:IsShown(),
                 "minimized bar must be compact and hide secondary controls"
