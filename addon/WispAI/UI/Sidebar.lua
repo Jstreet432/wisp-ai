@@ -1,10 +1,17 @@
 local _, ns = ...
-local label, setText, box, button =
-    ns.UI.Widgets.Label, ns.UI.Widgets.SetText, ns.UI.Widgets.Box, ns.UI.Widgets.Button
-local GOLD, TEXT, MUTED = ns.UI.Widgets.GOLD, ns.UI.Widgets.TEXT, ns.UI.Widgets.MUTED
-local sidebar, fold, sessionsLabel, newSession, chatsTab, routinesTab
+local widgets = ns.UI.Widgets
+local COLORS, FONTS = widgets.COLORS, widgets.FONTS
+local label, setText = widgets.Label, widgets.SetText
+local TEXT, ACCENT = widgets.TEXT, widgets.ACCENT
+-- The sidebar's width is the player's to drag between MIN_WIDTH and MAX_WIDTH,
+-- always leaving the conversation at least MIN_CHAT_WIDTH.
+local DEFAULT_WIDTH, MIN_WIDTH, MAX_WIDTH, MIN_CHAT_WIDTH = 190, 150, 320, 300
+local CHAT_ROW, ROW_GAP = 26, 2
+local NAV_ROW, FOOTER_HEIGHT = 30, 46
+local sidebar, nav, listCaption, footer
 local sessionContent, sessionScroll
 local sessionButtons = {}
+local newChatTab, routinesTab
 
 function ns.UI.RequestDeleteChat(id)
     for _, chat in ipairs(ns.chats) do
@@ -15,31 +22,141 @@ function ns.UI.RequestDeleteChat(id)
     end
 end
 
+-- The character's name, and for the avatar's tooltip its class, level and the
+-- connection state.
+local function characterLine()
+    local name = UnitName and UnitName("player") or nil
+    local className = UnitClass and UnitClass("player") or nil
+    local level = UnitLevel and UnitLevel("player") or nil
+    local state = ns.Transport.needsDesktopSetup and "Setup required"
+        or (ns.connected and "Connected" or "Offline")
+    local classLevel = className and level and (className .. " " .. level) or ""
+    return name or "Wisp", classLevel, state
+end
+
 -- Returns the sidebar width so the window can anchor the conversation panel.
-function ns.UI.Sidebar.Layout()
-    fold:SetShown(not ns.db.minimized)
-    sessionsLabel:SetShown(ns.db.sidebar)
-    newSession:SetShown(ns.db.sidebar)
-    sessionScroll:SetShown(ns.db.sidebar)
-    chatsTab:SetShown(ns.db.sidebar)
-    routinesTab:SetShown(ns.db.sidebar)
-    local width = ns.db.sidebar and 155 or 30
-    sidebar:SetWidth(width)
-    local arrow = ns.db.sidebar and "<" or ">"
-    if fold.lastText ~= arrow then
-        fold.lastText = arrow
-        fold:SetText(arrow)
+-- Collapsed, the sidebar is hidden entirely; its toggle lives in the title bar.
+local function expandedWidth()
+    local available = sidebar:GetParent():GetWidth() or 0
+    local most = MAX_WIDTH
+    if available > 0 then
+        most = math.max(MIN_WIDTH, math.min(MAX_WIDTH, available - MIN_CHAT_WIDTH))
     end
+    return math.floor(math.max(MIN_WIDTH, math.min(most, ns.db.sidebarWidth or DEFAULT_WIDTH)))
+end
+
+function ns.UI.Sidebar.Layout()
+    local expanded = ns.db.sidebar == true
+    sidebar:SetShown(expanded)
+    local width = expanded and expandedWidth() or 0
+    sidebar:SetWidth(math.max(1, width))
+    sessionContent:SetWidth(math.max(1, width - 12))
     return width
 end
 
-function ns.UI.Sidebar.Refresh()
-    local sessionCount = 0
-    local used = {}
+--- Shows or hides the sidebar; the title bar's sidebar button calls it.
+function ns.UI.Sidebar.Toggle()
+    ns.db.sidebar = not ns.db.sidebar
+    ns.UI.Refresh()
+end
+
+-- A conversation row's right side: the delete X shows on the selected row and
+-- while the row is hovered; otherwise the activity mark, if any. The title
+-- makes room only for what is shown.
+local function paintRowEnd(b)
+    local showDelete = b.selected == true or b.hovered == true
+    b.delete:SetShown(showDelete)
+    b.mark:SetShown(b.marked and not showDelete)
+    local inset = showDelete and -26 or (b.marked and -20 or -10)
+    if b.labelInset ~= inset then
+        b.labelInset = inset
+        b.label:SetPoint("RIGHT", inset, 0)
+    end
+end
+
+local function setHover(b, hovered)
+    b.hovered = hovered
+    paintRowEnd(b)
+end
+
+local function openRowMenu(b)
+    if not (MenuUtil and MenuUtil.CreateContextMenu) then
+        ns.UI.RequestDeleteChat(b.chatId)
+        return
+    end
+    MenuUtil.CreateContextMenu(b, function(_, root)
+        root:CreateButton("Delete conversation", function()
+            ns.UI.RequestDeleteChat(b.chatId)
+        end)
+    end)
+end
+
+local function makeRow()
+    local b = widgets.NavItem(sessionContent, "", CHAT_ROW)
+    b.marked = false
+    -- Rows span the list, so the title can run to the sidebar's edge.
+    b:SetPoint("RIGHT", sessionContent, "RIGHT")
+    b.mark = widgets.Dot(b, 5)
+    b.mark:SetPoint("RIGHT", -10, 0)
+    b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    b:SetScript("OnClick", function(self, mouse)
+        if mouse == "RightButton" then
+            openRowMenu(self)
+        else
+            ns.Chat.Select(self.chatId)
+        end
+    end)
+    b:SetScript("OnEnter", function(self)
+        setHover(self, true)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.fullTitle)
+        GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function(self)
+        GameTooltip:Hide()
+        -- Moving onto the delete button stays inside the row.
+        if not (self.IsMouseOver and self:IsMouseOver()) then
+            setHover(self, false)
+        end
+    end)
+    b.delete = CreateFrame("Button", nil, b)
+    b.delete:SetSize(18, 18)
+    b.delete:SetPoint("RIGHT", -4, 0)
+    b.delete.icon = b.delete:CreateTexture(nil, "ARTWORK")
+    b.delete.icon:SetTexture(widgets.TEXTURES .. "Close.tga")
+    b.delete.icon:SetSize(10, 10)
+    b.delete.icon:SetPoint("CENTER")
+    b.delete.icon:SetVertexColor(unpack(COLORS.secondary))
+    widgets.Hover(b.delete, 0.08)
+    b.delete:SetScript("OnClick", function()
+        ns.UI.RequestDeleteChat(b.chatId)
+    end)
+    b.delete:Hide()
+    b.delete:SetScript("OnEnter", function(self)
+        self.icon:SetVertexColor(unpack(TEXT))
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Delete conversation")
+        GameTooltip:Show()
+    end)
+    b.delete:SetScript("OnLeave", function(self)
+        self.icon:SetVertexColor(unpack(COLORS.secondary))
+        GameTooltip:Hide()
+        if not (b.IsMouseOver and b:IsMouseOver()) then
+            setHover(b, false)
+        end
+    end)
+    return b
+end
+
+-- Conversations started by the player; routine runs live on the Routines page.
+local function chatEntries()
     local ordered, positions = {}, {}
     for index, session in ipairs(ns.chats) do
-        ordered[#ordered + 1] = session
-        positions[session.id] = index
+        if not session.inline and not session.proactive and not session.routineId then
+            ordered[#ordered + 1] = session
+            positions[session.id] = index
+        end
     end
     table.sort(ordered, function(a, b)
         local aTime, bTime = a.lastActivityAt or 0, b.lastActivityAt or 0
@@ -48,145 +165,125 @@ function ns.UI.Sidebar.Refresh()
         end
         return aTime > bTime
     end)
-    if ns.sidebarTab == "routines" then
-        ordered = {}
-        if ns.sidebarRoutine then
-            for index = #(ns.routineRuns or {}), 1, -1 do
-                local run = ns.routineRuns[index]
-                if run.routineId == ns.sidebarRoutine and run.status ~= "no_tip" then
-                    local stamp = date and date("%d/%m %H:%M", run.startedAt / 1000) or run.event
-                    ordered[#ordered + 1] = {
-                        id = run.id,
-                        title = stamp .. " - " .. run.event,
-                        status = run.status,
-                        runEntry = true,
-                    }
-                end
-            end
-        else
-            for _, routine in ipairs(ns.routines or {}) do
-                ordered[#ordered + 1] = {
-                    id = "routine-header:" .. routine.id,
-                    title = routine.title,
-                    status = routine.enabled and "Active" or "Paused",
-                    routine = routine,
-                }
-            end
+    return ordered
+end
+
+local function refreshFooter()
+    local name, classLevel, state = characterLine()
+    setText(footer.name, name)
+    -- First UTF-8 character, so accented names keep a whole glyph.
+    setText(footer.initial, string.upper(name:match("^[%z\1-\127\194-\244][\128-\191]*") or ""))
+    -- Name and class/level are written out; the connection is the avatar's dot,
+    -- with its state spelled out only in the avatar's tooltip.
+    setText(footer.detail, classLevel)
+    footer.tooltip = classLevel ~= "" and (classLevel .. " · " .. state) or state
+    local tint = ns.Transport.needsDesktopSetup and COLORS.warning
+        or (ns.connected and COLORS.success or COLORS.muted)
+    footer.status:SetColorTexture(unpack(tint))
+end
+
+function ns.UI.Sidebar.Refresh()
+    -- While Settings covers the panel, neither section is the current view.
+    local inSettings = ns.UI.SettingsShown and ns.UI.SettingsShown()
+    local routines = ns.sidebarTab == "routines"
+    widgets.SetSelected(routinesTab, routines and not inSettings)
+    widgets.SetSelected(
+        newChatTab,
+        ns.composingNew == true and not ns.routinesPage and not inSettings
+    )
+    refreshFooter()
+    local used, y = {}, 0
+    for _, session in ipairs(chatEntries()) do
+        local b = sessionButtons[session.id]
+        if not b then
+            b = makeRow()
+            sessionButtons[session.id] = b
         end
-        if #ordered == 0 then
-            ordered[1] = {
-                id = "routine-empty",
-                title = ns.sidebarRoutine and "No runs yet" or "Ask Wisp in chat",
-                status = ns.sidebarRoutine and "Waiting for an event" or "to create a routine",
-                emptyEntry = true,
-            }
+        used[session.id] = true
+        b.chatId, b.fullTitle = session.id, session.title
+        local selected = session.id == ns.active and not ns.routinesPage
+        widgets.SetSelected(b, selected)
+        if FONTS.strong then
+            b.label:SetFontObject(selected and FONTS.strong or FONTS.body)
         end
+        local busy = session.status == "working"
+        b.selected = selected
+        b.marked = not selected and (busy or session.unread == true)
+        b.mark:SetColorTexture(unpack(busy and ACCENT or TEXT))
+        paintRowEnd(b)
+        setText(b.label, session.title)
+        if b.y ~= y then
+            b.y = y
+            b:ClearAllPoints()
+            b:SetPoint("TOPLEFT", 0, -y)
+            b:SetPoint("RIGHT", sessionContent, "RIGHT")
+        end
+        if not b:IsShown() then
+            b:Show()
+        end
+        y = y + CHAT_ROW + ROW_GAP
     end
-    for _, session in ipairs(ordered) do
-        if
-            ns.sidebarTab == "routines"
-            or (not session.inline and not session.proactive and not session.routineId)
-        then
-            sessionCount = sessionCount + 1
-            local index = sessionCount
-            local b = sessionButtons[session.id]
-            if not b then
-                b = CreateFrame("Button", nil, sessionContent, "BackdropTemplate")
-                b:SetSize(139, 42)
-                b.title = label(b, "")
-                b.title:SetPoint("TOPLEFT", 7, -7)
-                b.title:SetPoint("RIGHT", -28, 0)
-                b.title:SetWordWrap(false)
-                b.info = label(b, "", MUTED)
-                b.info:SetPoint("TOPLEFT", 7, -24)
-                b:SetScript("OnClick", function(self)
-                    if self.routine then
-                        ns.sidebarRoutine = self.routine.id
-                        ns.UI.Refresh()
-                    elseif not self.emptyEntry and self.runStatus ~= "no_tip" then
-                        ns.Chat.Select(self.chatId)
-                    end
-                end)
-                b:SetScript("OnEnter", function(self)
-                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                    GameTooltip:SetText(self.fullTitle)
-                    GameTooltip:Show()
-                end)
-                b:SetScript("OnLeave", function()
-                    GameTooltip:Hide()
-                end)
-                b.delete = button(b, "x", 20, function()
-                    if b.routine then
-                        ns.Transport.Send({
-                            type = "routine_action",
-                            data = {
-                                operation = b.routine.enabled and "pause" or "resume",
-                                id = b.routine.id,
-                            },
-                            context = ns.Character.Capture({ "character" }),
-                        })
-                    else
-                        ns.UI.RequestDeleteChat(b.chatId)
-                    end
-                end)
-                b.delete:SetSize(20, 20)
-                b.delete:SetPoint("TOPRIGHT", -3, -3)
-                b.delete:SetScript("OnEnter", function(self)
-                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                    GameTooltip:SetText(
-                        b.routine and "Pause / resume routine" or "Delete conversation"
-                    )
-                    GameTooltip:Show()
-                end)
-                b.delete:SetScript("OnLeave", function()
-                    GameTooltip:Hide()
-                end)
-                sessionButtons[session.id] = b
-            end
-            used[session.id] = true
-            b.chatId, b.fullTitle = session.id, session.title
-            b.routine, b.emptyEntry, b.runStatus =
-                session.routine, session.emptyEntry, session.runEntry and session.status or nil
-            b.delete:SetShown(not session.emptyEntry and not session.runEntry)
-            local deleteText = session.routine and (session.routine.enabled and "||" or ">") or "x"
-            if b.deleteText ~= deleteText then
-                b.deleteText = deleteText
-                b.delete:SetText(deleteText)
-            end
-            if b.index ~= index then
-                b.index = index
-                b:ClearAllPoints()
-                b:SetPoint("TOPLEFT", 0, -(index - 1) * 44)
-            end
-            setText(b.title, session.title)
-            setText(
-                b.info,
-                session.status == "working" and "Working..."
-                    or (session.runEntry and (session.status == "no_tip" and "No updates" or session.status))
-                    or ((session.routine or session.emptyEntry) and session.status)
-                    or (session.unread and "Unread" or "Conversation")
-            )
-            local selected = session.id == ns.active
-            if b.selected ~= selected then
-                b.selected = selected
-                b.title:SetTextColor(unpack(selected and GOLD or TEXT))
-                if selected then
-                    box(b, { 0.25, 0.21, 0.14, 1 }, 8)
-                else
-                    b:SetBackdrop(nil)
-                end
-            end
-            if not b:IsShown() then
-                b:Show()
-            end
-        end
-    end
-    sessionContent:SetHeight(math.max(1, sessionCount * 44))
+    sessionContent:SetHeight(math.max(1, y))
     for id, b in pairs(sessionButtons) do
         if not used[id] and b:IsShown() then
             b:Hide()
         end
     end
+end
+
+local function buildFooter()
+    footer = CreateFrame("Frame", nil, sidebar)
+    footer:SetPoint("BOTTOMLEFT", 0, 0)
+    footer:SetPoint("BOTTOMRIGHT", 0, 0)
+    footer:SetHeight(FOOTER_HEIGHT)
+    local rule = footer:CreateTexture(nil, "ARTWORK")
+    rule:SetPoint("TOPLEFT", 8, 0)
+    rule:SetPoint("TOPRIGHT", -8, 0)
+    rule:SetHeight(widgets.OnePixel(rule))
+    ns.UI.Widgets.Tint(rule, COLORS.line)
+    footer.avatar = CreateFrame("Frame", nil, footer, "BackdropTemplate")
+    footer.avatar:SetSize(26, 26)
+    footer.avatar:SetPoint("LEFT", 10, -1)
+    widgets.Box(footer.avatar, COLORS.selected, COLORS.lineStrong)
+    footer.status = widgets.Dot(footer.avatar, 6, COLORS.muted)
+    footer.status:SetPoint("BOTTOMRIGHT", footer.avatar, "BOTTOMRIGHT", 2, -2)
+    footer.avatar:EnableMouse(true)
+    footer.avatar:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(footer.name:GetText() or "")
+        if footer.tooltip and footer.tooltip ~= "" then
+            GameTooltip:AddLine(footer.tooltip, 1, 1, 1)
+        end
+        GameTooltip:Show()
+    end)
+    footer.avatar:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    footer.name = label(footer, "", TEXT, FONTS.strong)
+    footer.name:SetPoint("TOPLEFT", footer.avatar, "TOPRIGHT", 8, 1)
+    footer.name:SetPoint("RIGHT", -32, 0)
+    footer.name:SetWordWrap(false)
+    footer.detail = label(footer, "", COLORS.secondary, FONTS.small)
+    footer.detail:SetPoint("TOPLEFT", footer.name, "BOTTOMLEFT", 0, -2)
+    footer.detail:SetPoint("RIGHT", -32, 0)
+    footer.detail:SetWordWrap(false)
+    footer.initial = label(footer.avatar, "", TEXT, FONTS.strong)
+    footer.initial:SetPoint("CENTER", 0, 0)
+    footer.initial:SetJustifyH("CENTER")
+    footer.profile = { rule, footer.avatar, footer.name, footer.detail }
+end
+
+-- The footer hosts the window's settings button next to the character.
+function ns.UI.Sidebar.Footer()
+    return footer
+end
+
+local function navItem(text, click, icon)
+    local item = widgets.NavItem(sidebar, text, NAV_ROW - 2, click, widgets.TEXTURES .. icon)
+    item.accentBar = true
+    item:SetFontString(item.label)
+    item:SetText(text)
+    return item
 end
 
 function ns.UI.Sidebar.Build(body)
@@ -201,51 +298,86 @@ function ns.UI.Sidebar.Build(body)
         whileDead = true,
         hideOnEscape = true,
     }
-    sidebar = CreateFrame("Frame", nil, body, "BackdropTemplate")
+    sidebar = CreateFrame("Frame", "WispAISidebar", body, "BackdropTemplate")
     sidebar:SetPoint("TOPLEFT")
     sidebar:SetPoint("BOTTOMLEFT")
-    sidebar:SetWidth(155)
-    box(sidebar, { 0.10, 0.085, 0.065, 1 }, 8)
-    sessionsLabel = label(sidebar, "Sessions", GOLD)
-    sessionsLabel:SetPoint("TOPLEFT", 11, -12)
-    newSession = button(sidebar, "+", 25, function()
-        ns.Chat.NewChat()
+    sidebar:SetWidth(DEFAULT_WIDTH)
+    widgets.Box(sidebar, COLORS.sidebar, COLORS.line)
+    -- A grip on the right edge resizes the sidebar; its edge lights while hovered
+    -- or dragged, and the width is kept in the saved variables.
+    local grip = CreateFrame("Button", "WispAISidebarResize", sidebar)
+    grip:SetPoint("TOPRIGHT", 3, 0)
+    grip:SetPoint("BOTTOMRIGHT", 3, 0)
+    grip:SetWidth(6)
+    grip:SetFrameLevel(sidebar:GetFrameLevel() + 20)
+    grip.edge = grip:CreateTexture(nil, "OVERLAY")
+    grip.edge:SetPoint("TOP")
+    grip.edge:SetPoint("BOTTOM")
+    grip.edge:SetWidth(2)
+    widgets.Tint(grip.edge, COLORS.accentLine)
+    grip.edge:Hide()
+    local function cursorX()
+        local x = GetCursorPosition()
+        return x / (sidebar:GetEffectiveScale() or 1)
+    end
+    grip:SetScript("OnEnter", function(self)
+        self.edge:Show()
     end)
-    newSession:SetPoint("TOPRIGHT", -33, -6)
-    fold = CreateFrame("Button", "WispAISidebarToggle", sidebar, "UIPanelButtonTemplate")
-    fold:SetSize(22, 24)
-    fold:SetPoint("TOPRIGHT", -5, -6)
-    fold:SetScript("OnClick", function()
-        ns.db.sidebar = not ns.db.sidebar
-        ns.UI.Refresh()
+    grip:SetScript("OnLeave", function(self)
+        if not self.dragging then
+            self.edge:Hide()
+        end
     end)
-    fold:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(ns.db.sidebar and "Collapse sessions" or "Expand sessions")
-        GameTooltip:Show()
+    grip:SetScript("OnMouseDown", function(self)
+        self.dragging, self.startX, self.startWidth = true, cursorX(), expandedWidth()
     end)
-    fold:SetScript("OnLeave", function()
-        GameTooltip:Hide()
+    grip:SetScript("OnMouseUp", function(self)
+        self.dragging = false
+        if not self:IsMouseOver() then
+            self.edge:Hide()
+        end
     end)
+    grip:SetScript("OnUpdate", function(self)
+        if not self.dragging then
+            return
+        end
+        local width = math.floor(self.startWidth + cursorX() - self.startX + 0.5)
+        width = math.max(MIN_WIDTH, math.min(MAX_WIDTH, width))
+        if width ~= ns.db.sidebarWidth then
+            ns.db.sidebarWidth = width
+            ns.UI.Refresh()
+        end
+    end)
+    -- New chat opens a blank conversation; it is created when the first message is sent.
+    newChatTab = navItem("New chat", function()
+        ns.Chat.StartNew()
+    end, "Plus.tga")
+    routinesTab = navItem("Routines", function()
+        ns.UI.Routines.Show()
+    end, "Clock.tga")
+    -- Memory, integrations and saved panels are settings; they live under Settings > Data.
+    -- Recents is the way back to a conversation, as in Claude: no separate Chats entry.
+    nav = { newChatTab, routinesTab }
+    for index, item in ipairs(nav) do
+        local top = -6 - (index - 1) * NAV_ROW
+        item:SetPoint("TOPLEFT", 6, top)
+        item:SetPoint("RIGHT", -6, 0)
+    end
+    local listTop = -6 - #nav * NAV_ROW
+    listCaption = widgets.Caption(sidebar, "Recents")
+    listCaption:SetPoint("TOPLEFT", 16, listTop - 12)
+    buildFooter()
     sessionScroll = CreateFrame("ScrollFrame", nil, sidebar)
-    chatsTab = button(sidebar, "Chats", 64, function()
-        ns.sidebarTab = "chats"
-        ns.UI.Refresh()
-    end)
-    chatsTab:SetPoint("TOPLEFT", 6, -35)
-    routinesTab = button(sidebar, "Routines", 75, function()
-        ns.sidebarTab, ns.sidebarRoutine = "routines", nil
-        ns.UI.Refresh()
-    end)
-    routinesTab:SetPoint("LEFT", chatsTab, "RIGHT", 2, 0)
-    sessionScroll:SetPoint("TOPLEFT", 7, -64)
-    sessionScroll:SetPoint("BOTTOMRIGHT", -7, 8)
+    sessionScroll:SetPoint("TOPLEFT", 6, listTop - 30)
+    sessionScroll:SetPoint("BOTTOMRIGHT", -6, FOOTER_HEIGHT + 4)
+    sessionScroll:SetClipsChildren(true)
     sessionContent = CreateFrame("Frame", nil, sessionScroll)
-    sessionContent:SetSize(139, 1)
+    sessionContent:SetSize(DEFAULT_WIDTH - 12, 1)
     sessionScroll:SetScrollChild(sessionContent)
     sessionScroll:EnableMouseWheel(true)
     sessionScroll:SetScript("OnMouseWheel", function(self, delta)
-        self:SetVerticalScroll(
+        widgets.SetScroll(
+            self,
             math.max(
                 0,
                 math.min(self:GetVerticalScrollRange(), self:GetVerticalScroll() - delta * 35)

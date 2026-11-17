@@ -55,6 +55,8 @@ it("keeps multiline drafts clipped and follows the cursor across composer layout
         )
     end
     assert(#draft:GetText() == 40 and viewport:GetVerticalScroll() > 0)
+    local field = viewport:GetParent()
+    assert(field:GetHeight() == 168, "the field grows with its text up to its maximum")
     assert(bar:IsShown() and bar:GetValue() == viewport:GetVerticalScroll())
     bar:SetValue(120)
     assert(viewport:GetVerticalScroll() == 120, "dragging the scrollbar must scroll the draft")
@@ -80,23 +82,29 @@ it("keeps multiline drafts clipped and follows the cursor across composer layout
     draft:SetHeight(16)
     draft.scripts.OnTextChanged(draft, false)
     assert(viewport:GetVerticalScroll() == 0, "shorter restored drafts must clamp the scroll")
+    -- One 16-unit test line plus the padding that centers a 12-unit font in 40.
+    assert(field:GetHeight() == 44, "a one-line draft shrinks the field back to one line")
     assert(not bar:IsShown() and bar:GetValue() == 0)
     viewport:SetVerticalScroll(100)
     draft:SetText("")
+    draft:SetHeight(12) -- a native empty EditBox is one font line tall
     draft.scripts.OnTextChanged(draft, false)
     assert(viewport:GetVerticalScroll() == 0, "clearing the draft must reset the scroll")
+    assert(field:GetHeight() == 40, "an empty draft is exactly the one-line field")
 
     local controls = UI_TEST.frames.WispAIChatModelControls
+    local meter = UI_TEST.frames.WispAIContextUsage
+    assert(controls:GetParent() ~= field, "model choices sit below the field, not inside it")
     for _, width in ipairs({ 350, 500, 350 }) do
-        local composer = controls:GetParent()
-        composer:SetWidth(width)
-        composer.scripts.OnSizeChanged(composer, width)
+        field:SetWidth(width)
+        field.scripts.OnSizeChanged(field, width)
         ns.UI.Refresh()
         local point, _, _, _, bottom = viewport:GetPoint()
-        assert(point == "BOTTOMRIGHT" and bottom == (width < 380 and 56 or 28))
+        assert(point == "BOTTOMRIGHT" and bottom == 14, "text is centered on the font size")
         local transcriptBar = UI_TEST.frames.WispAITranscriptScrollBar
         local _, _, _, _, transcriptBottom = transcriptBar:GetPoint()
-        assert(transcriptBottom == (width < 380 and 132 or 104))
+        assert(transcriptBottom == 90, "a one-line field keeps the transcript just above it")
+        assert(meter:IsShown() == (width >= 400), "narrow fields leave the row to the model")
         local _, parent = draft:GetPoint()
         assert(parent == viewport, "layout changes must keep the editor inside its scroll area")
     end
@@ -146,6 +154,58 @@ it("sends the starter prompt from the empty chat while preserving the draft", fu
     assert(not starter:IsShown())
 end)
 
+it("New chat creates its conversation with the first message and keeps its draft", function()
+    local env = helper.env()
+    setfenv(1, env)
+    setup(env)
+    time = os.time
+    ns = helper.namespace({
+        db = { sidebar = true, drafts = {} },
+        connected = true,
+        session = "test",
+        active = "old",
+        chats = {
+            {
+                id = "old",
+                title = "Old",
+                status = "done",
+                messages = { { id = "m", role = "user", text = "Hi" } },
+                activity = {},
+            },
+        },
+        pendingChats = {},
+        pendingMessages = {},
+        workStarted = {},
+    })
+    local sent = {}
+    function ns.Transport.Send(packet)
+        sent[#sent + 1] = packet
+    end
+    helper.addon("Chat/State.lua", env)
+    helper.addon("UI/Window.lua", env)
+    ns.UI.BuildUI()
+    for index = #sent, 1, -1 do
+        sent[index] = nil
+    end
+
+    ns.Chat.StartNew()
+    assert(#sent == 0 and ns.active == nil and #ns.chats == 1, "New chat creates nothing yet")
+    ns.draft:SetText("Plan my route")
+    ns.Chat.Select("old")
+    assert(ns.draft:GetText() == "")
+    ns.Chat.StartNew()
+    assert(ns.draft:GetText() == "Plan my route", "returning to New chat restores its draft")
+    for index = #sent, 1, -1 do
+        sent[index] = nil
+    end
+    ns.Chat.Submit()
+    assert(#sent == 2 and sent[1].type == "new" and sent[2].type == "say")
+    assert(sent[2].text == "Plan my route" and sent[2].chat == ns.active)
+    assert(#ns.chats == 2 and ns.draft:GetText() == "")
+    ns.Chat.StartNew()
+    assert(ns.draft:GetText() == "", "a sent draft does not come back")
+end)
+
 it(
     "chat placeholder distinguishes connecting, fetching history and an empty conversation",
     function()
@@ -163,7 +223,7 @@ it(
         end
         helper.addon("UI/Window.lua", env)
         ns.UI.BuildUI()
-        local header = UI_TEST.frames.WispAISettingsButton.parent
+        local header = UI_TEST.frames.WispAIHeader
         local setPoint = header.title.SetPoint
         local titleLeft
         header.title.SetPoint = function(self, point, relative, relativePoint, x, y)
@@ -312,8 +372,8 @@ it(
             end,
         }
         meter.scripts.OnEnter(meter)
-        assert(table.concat(lines, "|"):find("not your subscription allowance", 1, true))
-        assert(table.concat(lines, "|"):find("Auto compact: 75%", 1, true))
+        assert(table.concat(lines, "|"):find("24k of 100k tokens", 1, true))
+        assert(table.concat(lines, "|"):find("summarized at 75%", 1, true))
         ns.chats[1].usage.compacting = true
         ns.chats[1].status = "working"
         ns.UI.Refresh()
@@ -476,32 +536,67 @@ it(
         end
         do
             local fold = UI_TEST.frames.WispAISidebarToggle
+            local sidebar = UI_TEST.frames.WispAISidebar
             local gear = UI_TEST.frames.WispAISettingsButton
             local tabs = {}
             for _, widget in ipairs(UI_TEST.widgets) do
                 if
-                    widget.parent == fold.parent
-                    and (widget:GetText() == "Chats" or widget:GetText() == "Routines")
+                    widget.parent == sidebar
+                    and (widget:GetText() == "New chat" or widget:GetText() == "Routines")
                 then
                     tabs[#tabs + 1] = widget
                 end
             end
-            assert(#tabs == 2 and tabs[1]:IsShown() and tabs[2]:IsShown())
-            assert(fold.parent ~= gear.parent, "sidebar toggle must live in the sidebar")
+            assert(#tabs == 2 and tabs[1]:IsVisible() and tabs[2]:IsVisible())
+            for _, widget in ipairs(UI_TEST.widgets) do
+                assert(
+                    widget.parent ~= sidebar or widget:GetText() ~= "Chats",
+                    "Recents is the way back to a chat; there is no separate Chats section"
+                )
+            end
+            assert(
+                gear.parent.parent == sidebar,
+                "settings must live in the sidebar footer, beside the character"
+            )
             assert(gear:GetText() == "", "settings uses an icon instead of a text label")
+            assert(
+                fold.parent == UI_TEST.frames.WispAIHeader,
+                "the sidebar toggle leads the title bar, so it never hangs off the sidebar"
+            )
             fold.scripts.OnClick()
             assert(
-                not ns.db.sidebar and fold:GetText() == ">" and fold.parent:GetWidth() == 30,
-                "collapsed sidebar must retain its own expand control"
+                not ns.db.sidebar and not sidebar:IsShown() and fold:IsVisible(),
+                "collapsing hides the whole sidebar and keeps the toggle in the title bar"
             )
             assert(
-                not tabs[1]:IsShown() and not tabs[2]:IsShown(),
+                not tabs[1]:IsVisible() and not tabs[2]:IsVisible(),
                 "collapsed sidebar must hide both tabs so they cannot overlap the conversation"
             )
             fold.scripts.OnClick()
-            assert(ns.db.sidebar and fold:GetText() == "<")
+            assert(ns.db.sidebar and sidebar:IsShown())
+            local grip = UI_TEST.frames.WispAISidebarResize
+            local cursor = 100
+            function GetCursorPosition()
+                return cursor, 0
+            end
+            sidebar:GetParent():SetWidth(700)
+            ns.UI.Refresh()
+            grip.scripts.OnMouseDown(grip)
+            cursor = 160
+            grip.scripts.OnUpdate(grip)
+            assert(sidebar:GetWidth() == 250, "dragging the edge widens the sidebar")
+            cursor = -1000
+            grip.scripts.OnUpdate(grip)
+            assert(sidebar:GetWidth() == 150, "the sidebar keeps a minimum width")
+            sidebar:GetParent():SetWidth(500)
+            cursor = 1000
+            grip.scripts.OnUpdate(grip)
+            assert(sidebar:GetWidth() == 200, "the conversation always keeps its own width")
+            grip.scripts.OnMouseUp(grip)
+            ns.db.sidebarWidth = nil
+            ns.UI.Refresh()
             assert(
-                tabs[1]:IsShown() and tabs[2]:IsShown(),
+                tabs[1]:IsVisible() and tabs[2]:IsVisible(),
                 "expanding the sidebar must restore both tabs"
             )
             ns.UI.SetMinimized(true)
@@ -513,6 +608,26 @@ it(
             )
             ns.UI.SetMinimized(false)
             assert(fold:IsShown() and gear:IsShown(), "expanding must restore controls")
+            local settingsPage = UI_TEST.frames.WispAISettingsPage
+            local memoryPage = UI_TEST.frames.WispAIMemoryPanel
+            gear.scripts.OnClick(gear)
+            ns.UI.ShowSettings("memory")
+            assert(settingsPage:IsShown() and memoryPage:IsShown())
+            assert(not tabs[2]._wispSelected, "no section is current while Settings is open")
+            tabs[2].scripts.OnClick(tabs[2])
+            assert(
+                not settingsPage:IsShown() and not memoryPage:IsShown(),
+                "navigating away closes Settings and its subpages"
+            )
+            assert(UI_TEST.frames.WispAIRoutinesPage:IsShown())
+            gear.scripts.OnClick(gear)
+            assert(
+                settingsPage:IsShown() and not memoryPage:IsShown(),
+                "Settings reopens on General"
+            )
+            ns.UI.ShowSettings(nil)
+            ns.sidebarTab, ns.routinesPage = "chats", false
+            ns.UI.Refresh()
         end
         do
             local bar = UI_TEST.frames.WispAITranscriptScrollBar
@@ -947,12 +1062,13 @@ it(
         assert(
             progress.parent == row.parent
                 and progress.parent ~= ns.draft.parent
-                and progress.author:GetText() == "Wisp AI",
-            "progress belongs in the transcript as an assistant row"
+                and progress.mark ~= nil,
+            "progress belongs in the transcript as an assistant row led by Wisp's mark"
         )
         local bar = UI_TEST.frames.WispAITranscriptScrollBar
         local _, _, _, _, bottom = bar:GetPoint()
-        assert(bottom == 104, "there must be no additional reserved progress gap")
+        -- The transcript ends 6 above an empty one-line composer: 40 field + 30 row + 14 margin.
+        assert(bottom == 90, "there must be no additional reserved progress gap")
         table.insert(ns.chats[1].messages, { id = "next", role = "user", text = "What next?" })
         ns.chats[1].status = "working"
         ns.UI.Refresh()
