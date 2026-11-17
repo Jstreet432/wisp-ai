@@ -32,6 +32,7 @@ import { existsSync, closeSync } from 'node:fs';
 import { CapabilitySettings } from './capabilities.ts';
 import { defaultCapabilities } from '@wisp/protocol/capabilities';
 import { SnapshotGate } from './snapshots.ts';
+import { createPublishScheduler, PUBLISH_MIN_INTERVAL_MS } from './publish-scheduler.ts';
 import { PanelStore } from './panels.ts';
 import { McpManager } from './mcp-manager.ts';
 import { McpRelay } from './mcp-relay.ts';
@@ -259,6 +260,8 @@ export async function startBridge(options: BridgeOptions = {}) {
     let eveReady = false;
     let contextWindowTokens: number | undefined;
     let dirty = true;
+    const publisher = createPublishScheduler(() => publishSnapshot());
+    resources.defer(() => publisher.stop());
     const pending = new GameRequests(changed);
     resources.defer(() => pending.cancelAll('Bridge stopped'));
     const token = randomBytes(32).toString('hex');
@@ -281,6 +284,7 @@ export async function startBridge(options: BridgeOptions = {}) {
     mcpRelay.readOnlyMode = () => state.chats.some((c) => c.proactive && c.status === 'working');
     function changed() {
       dirty = true;
+      publisher.schedule();
       if (!shutdownRequested) {
         chatStore.schedule(() => state.chats);
       }
@@ -768,10 +772,13 @@ export async function startBridge(options: BridgeOptions = {}) {
         });
       }
     }
+    // Snapshots publish from changed(); this tick only polls what has no event:
+    // the addon's acknowledged revision, and a publish that is still dirty
+    // because the transport was missing or its last write failed.
     const publish = setInterval(() => {
       observeGameConnection();
-      publishSnapshot();
-    }, 400);
+      if (dirty) publisher.schedule();
+    }, PUBLISH_MIN_INTERVAL_MS);
     logger.info({ event: 'bridge.started', version: bridgeVersion }, 'Wisp started');
     resources.defer(() => clearInterval(publish));
     function stop() {
