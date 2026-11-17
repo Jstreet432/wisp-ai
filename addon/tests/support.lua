@@ -1,5 +1,20 @@
 local M = {}
 
+-- Every shipped locale table; M.addon loads them with the lookup, as the manifest does.
+M.LOCALES = {
+    "enUS",
+    "deDE",
+    "esES",
+    "esMX",
+    "frFR",
+    "itIT",
+    "koKR",
+    "ptBR",
+    "ruRU",
+    "zhCN",
+    "zhTW",
+}
+
 -- WoW globals and callbacks belong to one scenario, using Lua 5.1 environments.
 function M.env()
     local env = {}
@@ -28,6 +43,13 @@ end
 
 function M.addon(name, env)
     setfenv(assert(loadfile("addon/WispAI/Namespace.lua")), env)("WispAI", env.ns)
+    if not env.ns.L then
+        setfenv(assert(loadfile("addon/WispAI/Locale.lua")), env)("WispAI", env.ns)
+        for _, locale in ipairs(M.LOCALES) do
+            local path = "addon/WispAI/Locales/" .. locale .. ".lua"
+            setfenv(assert(loadfile(path)), env)("WispAI", env.ns)
+        end
+    end
     if not env.ns.Shared.Numbers.IsFinite then
         setfenv(assert(loadfile("addon/WispAI/Shared/Numbers.lua")), env)("WispAI", env.ns)
     end

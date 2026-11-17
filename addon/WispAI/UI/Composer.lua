@@ -1,4 +1,5 @@
 local _, ns = ...
+local L = ns.L
 local widgets = ns.UI.Widgets
 local COLORS = widgets.COLORS
 local TEXTURES = widgets.TEXTURES
@@ -134,7 +135,7 @@ local function makeSend(parent, click)
     b:SetScript("OnClick", click)
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText(self.working and "Stop" or "Send (Enter). Shift+Enter adds a line.")
+        GameTooltip:SetText(self.working and L["composer.stop"] or L["composer.sendHint"])
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function()
@@ -170,8 +171,8 @@ function ns.UI.Composer.Build(chatPanel, onHeightChanged)
     inputScroll:SetPoint("TOPLEFT", PAD_X, -14)
     inputScroll:SetPoint("BOTTOMRIGHT", -(SEND_SIZE + 18), 14)
     inputScroll:SetClipsChildren(true)
-    placeholder = widgets.Label(inputBox, "Ask Wisp anything", COLORS.muted)
-    widgets.ChatFont(placeholder, "Ask Wisp anything")
+    placeholder = widgets.Label(inputBox, L["composer.placeholder"], COLORS.muted)
+    widgets.ChatFont(placeholder, L["composer.placeholder"])
     placeholder:SetPoint("TOPLEFT", inputScroll, "TOPLEFT", 0, 0)
     ns.draft = CreateFrame("EditBox", "WispAIInput", inputScroll)
     ns.draft:SetMultiLine(true)

@@ -1,4 +1,5 @@
 local _, ns = ...
+local L = ns.L
 local toast, body
 local events, subscribed = nil, {}
 local queued = {}
@@ -67,7 +68,7 @@ function ns.Advice.RefreshAdvice()
             end
         end
     end
-    toast.heading:SetText("Routine" .. (routineName and (" · " .. routineName) or ""))
+    toast.heading:SetText(L["routines.routine"] .. (routineName and (" · " .. routineName) or ""))
     local preview = tip.title
     for _, chat in ipairs(ns.chats or {}) do
         if chat.id == tip.id then
@@ -76,7 +77,7 @@ function ns.Advice.RefreshAdvice()
                     preview = message.text
                         :gsub("%[%[ref:([%w_-]+)%]%]", function(key)
                             local ref = message.references and message.references[key]
-                            return ref and ref.label or "Reference"
+                            return ref and ref.label or L["advice.reference"]
                         end)
                         :gsub("[%*`]", "")
                         :gsub("|", "||")
@@ -128,7 +129,7 @@ local function buildToast()
     close:SetScript("OnEnter", function(self)
         self.icon:SetVertexColor(unpack(COLORS.text))
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText("Dismiss")
+        GameTooltip:SetText(L["advice.dismiss"])
         GameTooltip:Show()
     end)
     close:SetScript("OnLeave", function(self)
@@ -136,7 +137,7 @@ local function buildToast()
         GameTooltip:Hide()
     end)
     toast.close = close
-    toast.heading = widgets.Caption(toast, "Routine")
+    toast.heading = widgets.Caption(toast, L["routines.routine"])
     toast.heading:SetPoint("LEFT", mark, "RIGHT", 8, 0)
     toast.heading:SetPoint("RIGHT", close, "LEFT", -6, 0)
     toast.heading:SetWordWrap(false)
@@ -147,7 +148,7 @@ local function buildToast()
     body:SetSpacing(2)
     body:SetMaxLines(BODY_LINES)
     toast.body = body
-    local read = widgets.Button(toast, "Read", 72, function()
+    local read = widgets.Button(toast, L["advice.read"], 72, function()
         local id = toast.chatId
         toast:Hide()
         ns.Chat.Select(id)
@@ -156,7 +157,7 @@ local function buildToast()
     read:SetPoint("BOTTOMRIGHT", -PAD, 12)
     toast.read = read
     -- A ghost link whose label lines up with the tip's text.
-    local all = widgets.Button(toast, "All routines", 96, function()
+    local all = widgets.Button(toast, L["advice.allRoutines"], 96, function()
         toast:Hide()
         ns.UI.SetMinimized(false)
         ns.UI.Routines.Show()

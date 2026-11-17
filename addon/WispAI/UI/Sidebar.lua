@@ -1,4 +1,5 @@
 local _, ns = ...
+local L = ns.L
 local widgets = ns.UI.Widgets
 local COLORS, FONTS = widgets.COLORS, widgets.FONTS
 local label, setText = widgets.Label, widgets.SetText
@@ -31,8 +32,8 @@ local function characterLine()
     local name = UnitName and UnitName("player") or nil
     local className = UnitClass and UnitClass("player") or nil
     local level = UnitLevel and UnitLevel("player") or nil
-    local state = ns.Transport.needsDesktopSetup and "Setup required"
-        or (ns.connected and "Connected" or "Offline")
+    local state = ns.Transport.needsDesktopSetup and L["status.setupRequired"]
+        or (ns.connected and L["status.connected"] or L["status.offline"])
     local classLevel = className and level and (className .. " " .. level) or ""
     return name or "Wisp", classLevel, state
 end
@@ -88,7 +89,7 @@ local function openRowMenu(b)
         return
     end
     MenuUtil.CreateContextMenu(b, function(_, root)
-        root:CreateButton("Delete conversation", function()
+        root:CreateButton(L["sidebar.deleteConversation"], function()
             ns.UI.RequestDeleteChat(b.chatId)
         end)
     end)
@@ -113,7 +114,7 @@ local function makeRow()
         setHover(self, true)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(self.fullTitle)
-        GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine(L["sidebar.rightClickOptions"], 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function(self)
@@ -139,7 +140,7 @@ local function makeRow()
     b.delete:SetScript("OnEnter", function(self)
         self.icon:SetVertexColor(unpack(TEXT))
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Delete conversation")
+        GameTooltip:SetText(L["sidebar.deleteConversation"])
         GameTooltip:Show()
     end)
     b.delete:SetScript("OnLeave", function(self)
@@ -324,9 +325,9 @@ end
 
 function ns.UI.Sidebar.Build(body)
     StaticPopupDialogs.WISPAI_DELETE_CHAT = {
-        text = 'Delete "%s"? This conversation will be removed.',
-        button1 = "Delete",
-        button2 = "Cancel",
+        text = L["sidebar.deleteConfirm"],
+        button1 = L["common.delete"],
+        button2 = L["common.cancel"],
         OnAccept = function(_, id)
             ns.Chat.DeleteChat(id)
         end,
@@ -385,10 +386,10 @@ function ns.UI.Sidebar.Build(body)
         end
     end)
     -- New chat opens a blank conversation; it is created when the first message is sent.
-    newChatTab = navItem("New chat", function()
+    newChatTab = navItem(L["sidebar.newChat"], function()
         ns.Chat.StartNew()
     end, "Plus.tga")
-    routinesTab = navItem("Routines", function()
+    routinesTab = navItem(L["routines.title"], function()
         ns.UI.Routines.Show()
     end, "Clock.tga")
     -- Memory, integrations and saved panels are settings; they live under Settings > Data.

@@ -53,13 +53,10 @@ function ns.Core.NotifyAddonUpdate()
         return
     end
     reloadNoticeShown = true
-    ns.Core.Log(
-        "Wisp "
-            .. ns.expectedAddonVersion
-            .. " is installed (loaded "
-            .. ns.addonVersion
-            .. "). Type /reload to load the new version."
-    )
+    ns.Core.Log(ns.LocaleText("notice.addonUpdated", {
+        installed = ns.expectedAddonVersion,
+        loaded = ns.addonVersion,
+    }))
 end
 function WispAI_Receive(json)
     local ok, data = pcall(C_EncodingUtil.DeserializeJSON, json)

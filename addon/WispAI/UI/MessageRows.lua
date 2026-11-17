@@ -1,4 +1,5 @@
 local _, ns = ...
+local L = ns.L
 local label, setText = ns.UI.Widgets.Label, ns.UI.Widgets.SetText
 local ACCENT, TEXT, MUTED = ns.UI.Widgets.ACCENT, ns.UI.Widgets.TEXT, ns.UI.Widgets.MUTED
 local COLORS = ns.UI.Widgets.COLORS
@@ -28,24 +29,24 @@ local function linked(row)
         local url = ns.Markdown.Links.Decode(link)
         if url then
             GameTooltip:SetText(url, 0.5, 0.78, 0.94)
-            GameTooltip:AddLine("Click to copy this web address.", 0.65, 0.65, 0.65, true)
+            GameTooltip:AddLine(L["link.copyUrl"], 0.65, 0.65, 0.65, true)
             GameTooltip:Show()
             return
         end
         local zone = tonumber(link:match("^wispzone:(%d+)$"))
         if zone then
             local info = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(zone)
-            GameTooltip:SetText(info and info.name or "Map", 1, 0.82, 0)
-            GameTooltip:AddLine("Click to open this map.", 0.65, 0.65, 0.65, true)
+            GameTooltip:SetText(info and info.name or L["link.map"], 1, 0.82, 0)
+            GameTooltip:AddLine(L["link.openMap"], 0.65, 0.65, 0.65, true)
             GameTooltip:Show()
             return
         end
         local mapId, x, y = mapLocation(link)
         if mapId then
             local info = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(mapId)
-            GameTooltip:SetText(info and info.name or "Map location", 1, 0.82, 0)
+            GameTooltip:SetText(info and info.name or L["link.mapLocation"], 1, 0.82, 0)
             GameTooltip:AddLine(string.format("%.2f, %.2f", x, y), 0.9, 0.87, 0.8)
-            GameTooltip:AddLine("Click to view this location on the map.", 0.65, 0.65, 0.65, true)
+            GameTooltip:AddLine(L["link.viewLocation"], 0.65, 0.65, 0.65, true)
             GameTooltip:Show()
             return
         end
@@ -56,15 +57,9 @@ local function linked(row)
             if index and index > 0 and GetMacroInfo then
                 local _, _, code = GetMacroInfo(index)
                 GameTooltip:AddLine((code or ""):gsub("|", "||"), 0.9, 0.87, 0.8, true)
-                GameTooltip:AddLine(
-                    "Click to pick up this macro, then place it on your action bar.",
-                    0.65,
-                    0.65,
-                    0.65,
-                    true
-                )
+                GameTooltip:AddLine(L["link.pickUpMacro"], 0.65, 0.65, 0.65, true)
             else
-                GameTooltip:AddLine("This macro is no longer available.", 0.8, 0.5, 0.4, true)
+                GameTooltip:AddLine(L["link.macroGone"], 0.8, 0.5, 0.4, true)
             end
             GameTooltip:Show()
             return
@@ -74,7 +69,12 @@ local function linked(row)
         if quest then
             GameTooltip:SetText(quest.title, 1, 0.82, 0)
             if quest.level then
-                GameTooltip:AddLine("Level " .. quest.level, 0.7, 0.7, 0.7)
+                GameTooltip:AddLine(
+                    L["link.questLevel"]:format(tostring(quest.level)),
+                    0.7,
+                    0.7,
+                    0.7
+                )
             end
             local objectives = C_QuestLog.GetQuestObjectives and C_QuestLog.GetQuestObjectives(id)
                 or {}
@@ -87,7 +87,7 @@ local function linked(row)
                     true
                 )
             end
-            GameTooltip:AddLine("Click to view quest. Shift-click to link.", 0.65, 0.65, 0.65, true)
+            GameTooltip:AddLine(L["link.viewQuest"], 0.65, 0.65, 0.65, true)
             GameTooltip:Show()
             return
         end
@@ -115,21 +115,21 @@ local function linked(row)
             if C_Map and C_Map.OpenWorldMap then
                 C_Map.OpenWorldMap(zone)
             else
-                ns.Core.Log("The map UI is unavailable.")
+                ns.Core.Log(L["notice.mapUnavailable"])
             end
             return
         end
         local macroName = macroNameFromLink(link)
         if macroName then
             if InCombatLockdown and InCombatLockdown() then
-                ns.Core.Log("Leave combat before picking up a macro.")
+                ns.Core.Log(L["notice.leaveCombatMacro"])
                 return
             end
             local index = GetMacroIndexByName and GetMacroIndexByName(macroName)
             if index and index > 0 and PickupMacro then
                 PickupMacro(index)
             else
-                ns.Core.Log("This macro is no longer available.")
+                ns.Core.Log(L["link.macroGone"])
             end
             return
         end
@@ -189,7 +189,7 @@ local function makeDelivery(row)
         dot:SetPoint("RIGHT", delivery, "RIGHT", (index - 3) * 8, 4)
         delivery.dots[index] = dot
     end
-    delivery.waiting = label(delivery, "Waiting for bridge", MUTED)
+    delivery.waiting = label(delivery, L["message.waitingBridge"], MUTED)
     delivery.waiting:SetFontObject(ns.UI.Widgets.FONTS.small or "GameFontHighlightSmall")
     delivery.waiting:SetTextColor(unpack(MUTED))
     delivery.waiting:SetPoint("RIGHT", delivery, "RIGHT", -30, 0)
@@ -224,7 +224,7 @@ end
 local function makeCopy(row)
     local copy = CreateFrame("Button", nil, row)
     copy:SetFrameLevel(row:GetFrameLevel() + 5)
-    copy.label = label(copy, "Copy", COLORS.muted, ns.UI.Widgets.FONTS.small)
+    copy.label = label(copy, L["copy.action"], COLORS.muted, ns.UI.Widgets.FONTS.small)
     copy.label:SetPoint("CENTER")
     copy:SetSize(math.ceil(copy.label:GetStringWidth()) + 12, 16)
     -- The label lines up with the reply's left edge; the hover wash extends past it.
@@ -239,7 +239,7 @@ local function makeCopy(row)
     copy:SetScript("OnClick", function()
         if row.copySource then
             ns.UI.Widgets.ShowCopyText(
-                "Copy reply",
+                L["copy.replyTitle"],
                 ns.Markdown.PlainText.FromMessage(row.copySource)
             )
         end
@@ -282,7 +282,7 @@ local function makeRow(parent)
         ns.UI.Refresh(row.chatId)
     end)
     row.disclosure:Hide()
-    row.retry = ns.UI.Widgets.Button(row, "Retry", 80, function(self)
+    row.retry = ns.UI.Widgets.Button(row, L["message.retry"], 80, function(self)
         self:Disable()
         ns.Transport.Send({
             type = "retry",
@@ -300,10 +300,10 @@ ns.UI.MakeMessageRow = makeRow
 local function toolDetails(tool, name)
     local lines = {}
     if type(tool.inputPreview) == "string" and tool.inputPreview ~= "" then
-        lines[#lines + 1] = "Input  " .. tool.inputPreview
+        lines[#lines + 1] = L["message.toolInput"] .. "  " .. tool.inputPreview
     end
     if type(tool.resultPreview) == "string" and tool.resultPreview ~= "" then
-        lines[#lines + 1] = "Result  " .. tool.resultPreview
+        lines[#lines + 1] = L["message.toolResult"] .. "  " .. tool.resultPreview
     elseif type(tool.detail) == "string" and tool.detail ~= "" and tool.detail ~= name then
         lines[#lines + 1] = tool.detail
     end
@@ -565,7 +565,8 @@ function ns.UI.RenderMessageRow(row, chat, message, width, showAuthor, animateRe
         row.authorMark:SetColorTexture(unpack(message.role == "system" and COLORS.muted or ACCENT))
         setText(
             row.author,
-            message.role == "user" and "You" or (message.role == "system" and "Notice" or "Wisp AI")
+            message.role == "user" and L["message.you"]
+                or (message.role == "system" and L["message.notice"] or "Wisp AI")
         )
         if message.role == "tool" then
             if row.rich then

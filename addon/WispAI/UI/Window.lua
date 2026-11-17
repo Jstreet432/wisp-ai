@@ -1,4 +1,5 @@
 local _, ns = ...
+local L = ns.L
 local COLORS = ns.UI.Widgets.COLORS
 local label, box = ns.UI.Widgets.Label, ns.UI.Widgets.Box
 local TEXT = ns.UI.Widgets.TEXT
@@ -47,7 +48,7 @@ local function windowButton(parent)
     b:SetScript("OnEnter", function(self)
         paint(TEXT)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-        GameTooltip:SetText(ns.db.minimized and "Restore" or "Minimize")
+        GameTooltip:SetText(ns.db.minimized and L["window.restore"] or L["window.minimize"])
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function()
@@ -204,6 +205,7 @@ function ns.UI.Refresh(preserveScrollForChat)
 end
 
 function ns.UI.BuildUI()
+    ns.UI.Widgets.ApplyFonts(ns.ActiveLocale())
     refreshReferences()
     frame = CreateFrame("Frame", "WispAIWindow", UIParent, "BackdropTemplate")
     frame:SetSize(ns.db.expandedWidth or 700, ns.db.expandedHeight or 520)
@@ -246,7 +248,7 @@ function ns.UI.BuildUI()
     end)
     fold:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-        GameTooltip:SetText(ns.db.sidebar and "Hide sidebar" or "Show sidebar")
+        GameTooltip:SetText(ns.db.sidebar and L["sidebar.hide"] or L["sidebar.show"])
         GameTooltip:Show()
     end)
     fold:SetScript("OnLeave", function()
@@ -297,7 +299,7 @@ function ns.UI.BuildUI()
     end)
     gear:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText("Settings")
+        GameTooltip:SetText(L["settings.title"])
         GameTooltip:Show()
     end)
     gear:SetScript("OnLeave", function()
