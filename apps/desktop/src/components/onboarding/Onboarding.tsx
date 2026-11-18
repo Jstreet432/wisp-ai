@@ -62,7 +62,7 @@ export default function Onboarding() {
 
   return (
     <main
-      className={`grid min-h-screen bg-[radial-gradient(ellipse_at_50%_16%,#22332f_0%,transparent_55%)] px-6 pb-8 ${app.configured ? 'items-start pt-[clamp(2rem,12vh,7rem)]' : 'items-center pt-8'}`}
+      className={`grid min-h-full bg-[radial-gradient(ellipse_at_50%_16%,#22332f_0%,transparent_55%)] px-6 pb-8 ${app.configured ? 'items-start pt-[clamp(2rem,12vh,7rem)]' : 'items-center pt-8'}`}
     >
       <div className="mx-auto w-full max-w-[720px]">
         <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -122,10 +122,10 @@ export default function Onboarding() {
                               <Icon name="chevronRight" size={16} />
                             </span>
                             <span className="col-span-2 min-w-0">
-                              <strong className="block text-[14px]">{name}</strong>
+                              <strong className="block text-base">{name}</strong>
                               <span
                                 id={`setup-provider-${id}`}
-                                className="block text-[12px] text-muted"
+                                className="block text-xs text-muted"
                               >
                                 {description}
                               </span>
@@ -172,11 +172,11 @@ function SetupStep({
   return (
     <li
       aria-current={current ? 'step' : undefined}
-      className={`flex items-center gap-2 border-b-2 pb-3 text-[13px] ${current ? 'border-accent' : 'border-border text-muted'}`}
+      className={`flex items-center gap-2 border-b-2 pb-3 text-sm ${current ? 'border-accent' : 'border-border text-muted'}`}
     >
       <span
         aria-hidden="true"
-        className={`grid h-6 w-6 shrink-0 place-items-center rounded-full ${current ? 'bg-accent font-semibold text-[#102322]' : 'bg-surface text-accent'}`}
+        className={`grid h-6 w-6 shrink-0 place-items-center rounded-full ${current ? 'bg-accent font-semibold text-on-accent' : 'bg-surface text-accent'}`}
       >
         {done ? <Icon name="check" size={15} /> : number}
       </span>

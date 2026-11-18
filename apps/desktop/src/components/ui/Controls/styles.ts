@@ -1,23 +1,34 @@
 import { tv } from 'tailwind-variants';
 const fieldBase =
-  'min-h-[39px] min-w-0 w-full rounded-[7px] border border-solid border-[#36464d] bg-[#151d22] px-[12px] py-[9px] text-[#e4ebe9] placeholder:text-[#91a1a8] focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent focus-visible:outline-offset-[3px]';
+  'min-h-[32px] min-w-0 w-full rounded-[4px] border border-solid border-border border-b-field-line bg-field px-[10px] py-[6px] hover:bg-hover text-[#e4ebe9] placeholder:text-[#91a1a8]';
+/** Native-style focus: a darker field with an accent line along the bottom, no ring. */
+const fieldFocus =
+  'outline-none focus:bg-field-focus focus:border-b-accent focus:shadow-[inset_0_-1px_0_var(--color-accent)]';
+
+/** Shared look for everything that floats: menus, dialogs, toasts. */
+export const floatingSurface =
+  'rounded-[8px] border border-solid border-border bg-raised shadow-floating';
+export const dialogBackdrop = 'fixed inset-0 z-[20] bg-black/50';
 
 const focus =
   'focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent focus-visible:outline-offset-[3px]';
 export const button = tv({
-  base: `inline-flex min-h-[37px] cursor-pointer items-center justify-center gap-[9px] whitespace-nowrap rounded-[8px] border border-solid px-[15px] py-[8px] text-inherit transition-[background,border-color,transform] duration-150 enabled:hover:border-[#568780] enabled:hover:bg-[#2a3d3f] enabled:active:translate-y-px disabled:cursor-default disabled:opacity-40 ${focus}`,
+  base: `inline-flex min-h-[32px] items-center justify-center gap-[7px] whitespace-nowrap rounded-[4px] border border-solid px-[12px] py-[5px] text-base text-inherit transition-colors duration-75 disabled:cursor-default disabled:opacity-40 ${focus}`,
   variants: {
     intent: {
-      default: 'border-[#3a4c4f] bg-[#202a2f]',
+      default:
+        'border-divider border-b-pressed bg-control enabled:hover:bg-control-hover enabled:active:bg-pressed enabled:active:text-muted',
       primary:
-        'primary border-transparent bg-accent font-semibold text-[#102322] enabled:hover:bg-[#92e8d5]',
-      quiet: 'quiet border-transparent bg-transparent',
-      danger: 'danger-button border-[#3a4c4f] bg-[#713e3a] text-[#ffe8e3]',
+        'primary border-transparent border-b-black/20 bg-accent font-semibold text-on-accent enabled:hover:bg-accent-hover enabled:active:bg-accent-pressed',
+      quiet:
+        'quiet border-transparent bg-transparent enabled:hover:bg-hover enabled:active:bg-pressed',
+      danger:
+        'danger-button border-transparent bg-[#713e3a] text-[#ffe8e3] enabled:hover:bg-[#804640]',
     },
     size: {
       default: '',
-      text: 'text-button min-h-[24px] px-0 py-[4px] text-accent',
-      icon: 'icon-button min-h-[30px] p-[6px]',
+      text: 'text-button min-h-[24px] px-0 py-[2px] text-accent enabled:hover:bg-transparent enabled:hover:underline',
+      icon: 'icon-button min-h-[28px] p-[6px]',
     },
     destructive: { true: 'danger text-[#e5a399]' },
   },
@@ -25,42 +36,41 @@ export const button = tv({
 });
 
 export const navigationLink = tv({
-  base: button({
-    intent: 'quiet',
-    class:
-      'no-underline hover:border-[#568780] hover:bg-[#2a3d3f] active:translate-y-px min-h-[42px] shrink-0 justify-start gap-[13px] px-[14px] py-[10px] text-[13px] text-[#9aadb4] [@media(height<=700px)]:min-h-[40px] [@media(height<=700px)]:py-[9px]',
-  }),
-  variants: { selected: { true: 'bg-[#1e3333] text-accent' } },
+  base: `flex min-h-[34px] shrink-0 items-center gap-[10px] rounded-[4px] px-[10px] py-[6px] text-base text-subtle no-underline transition-colors duration-75 hover:bg-hover hover:text-foreground ${focus}`,
+  variants: { selected: { true: 'bg-active text-foreground hover:bg-active' } },
 });
 
 export const badge = tv({
-  base: 'badge inline-flex items-center gap-[7px] whitespace-nowrap rounded-[20px] border border-solid border-[#3a494e] px-[9px] py-[5px] text-[10px]',
+  base: 'badge inline-flex items-center gap-[6px] whitespace-nowrap rounded-[4px] bg-control px-[7px] py-[3px] text-[11px]',
   variants: { positive: { true: 'text-accent!', false: 'text-muted' } },
   defaultVariants: { positive: false },
 });
 
 export const card = tv({
-  base: 'card mb-[18px] rounded-[12px] border border-solid border-border bg-surface p-[23px]',
+  base: 'card mb-4 rounded-[6px] border border-solid border-divider bg-surface p-5',
   variants: {
     kind: {
       default: '',
-      provider: 'provider-card p-[26px]',
-      workspace:
-        'workspace-status bg-[linear-gradient(120deg,#1d2c2d,var(--surface)_80%)] p-[22px] md:p-[28px]',
-      installation: 'installation-card px-[23px] py-[20px]',
-      integration: 'integration px-[22px] py-[19px]',
-      toggle: 'toggle-card px-[22px] py-[19px]',
-      panel: 'panel-row px-[22px] py-[18px]',
-      empty: 'empty-state px-[30px] py-[64px] text-center',
+      provider: 'provider-card p-5',
+      integration: 'integration px-4 py-3',
+      toggle: 'toggle-card px-4 py-3',
+      panel: 'panel-row px-4 py-3',
+      empty: 'empty-state px-6 py-12 text-center',
     },
     density: { compact: 'p-4 max-sm:p-3' },
-    ready: { true: 'border-[#365b51]' },
   },
   defaultVariants: { kind: 'default' },
 });
 
-export const field = tv({ base: [fieldBase, 'disabled:opacity-50'] });
-export const checkbox = tv({
-  base: [fieldBase, 'h-[15px] min-h-0 w-[15px] p-0 accent-accent disabled:opacity-50'],
+export const field = tv({ base: [fieldBase, fieldFocus, 'disabled:opacity-50'] });
+/** Select trigger: a button, not a text field, so no underline focus; a ring only for keyboard focus. */
+export const selectTrigger = tv({
+  base: [fieldBase, 'outline-none', focus, 'disabled:opacity-50'],
 });
-export const textarea = tv({ base: [fieldBase, 'resize-y'] });
+export const checkbox = tv({
+  base: [
+    fieldBase,
+    'h-[15px] min-h-0 w-[15px] p-0 accent-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-accent focus-visible:outline-offset-[3px] disabled:opacity-50',
+  ],
+});
+export const textarea = tv({ base: [fieldBase, fieldFocus, 'resize-y'] });
