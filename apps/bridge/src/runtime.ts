@@ -1,26 +1,25 @@
 import { characterLabel } from '@wisp/protocol/character-key';
 import { RuntimeResources } from './runtime-resources.ts';
 import { UsageTelemetry } from './telemetry.ts';
-import { projectChats } from './chat-projection.ts';
 import { startRoutineScheduler } from './routine-scheduler.ts';
 import { createPacketReceiver } from './packet-receiver.ts';
 import { createSessionState } from './session-state.ts';
 import { createDesktopApp } from './desktop-handler.ts';
 import type { Status } from '@wisp/protocol/desktop';
-import { writeJson, readJson } from './json-file.ts';
+import { readJson } from './json-file.ts';
+import { loadBridgeConfig } from './bridge-config.ts';
 import { z } from 'zod';
 import { createAgentHandler } from './agent-server.ts';
 import { GameRequests } from './game-requests.ts';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { startEveProcess, stopEveProcess } from './agent-process.ts';
+import type { startEveProcess } from './agent-process.ts';
+import { createEveLifecycle } from './eve-lifecycle.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'eve/client';
-import { COMPACTION_THRESHOLD } from '@wisp/protocol/context-usage';
-import { DEFAULT_MODEL } from '@wisp/protocol/providers';
-import { DiskTransport } from './transport.ts';
+import { createTransportConnection } from './transport-connection.ts';
 import { ChatStore } from './chat-store.ts';
 import { applicationDatabaseFile } from './db/application-file.ts';
 import { ApplicationDatabase } from './db/application-database.ts';
@@ -29,11 +28,12 @@ import { errorMessage } from './errors.ts';
 import { bridgeLogger as logger } from './logger.ts';
 import { MemoryStore } from './memory-store.ts';
 import { IntegrationState } from './integration-state.ts';
-import { existsSync, closeSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { CapabilitySettings } from './capabilities.ts';
-import { defaultCapabilities } from '@wisp/protocol/capabilities';
+import { createMcpCapabilities } from './mcp-capabilities.ts';
 import { SnapshotGate } from './snapshots.ts';
-import { createPublishScheduler, PUBLISH_MIN_INTERVAL_MS } from './publish-scheduler.ts';
+import { PUBLISH_MIN_INTERVAL_MS } from './publish-scheduler.ts';
+import { createSnapshotPublisher } from './snapshot-publisher.ts';
 import { PanelStore } from './panels.ts';
 import { McpManager } from './mcp-manager.ts';
 import { McpRelay } from './mcp-relay.ts';
@@ -41,13 +41,14 @@ import { NativeVault, type SecretVault } from './secret-vault.ts';
 import { startDesktopServer } from './desktop-server.ts';
 import { listenOnLoopback } from './loopback-server.ts';
 import { RoutineStore } from './routines.ts';
-import { describeRoutineTrigger, routineEvents } from '@wisp/protocol/routines';
 import { ModelConnections } from './model-connections.ts';
+import { createModelCatalogRefresh } from './model-catalog.ts';
+import { createAccountOperations } from './account-operations.ts';
 import { WebSearch } from './web-search.ts';
 import { ChatGPTAuth } from './chatgpt-auth.ts';
 import { TheWoWDB } from './thewowdb.ts';
 import { Simulator } from './simulation.ts';
-import { appPaths, prepareEngine } from './app-paths.ts';
+import { appPaths } from './app-paths.ts';
 import { addonVersionFromToc } from './addon-version.ts';
 export interface BridgeOptions {
   resourceRoot?: string;
@@ -59,8 +60,27 @@ export interface BridgeOptions {
   startAgent?: typeof startEveProcess;
   deferWowTransport?: boolean;
 }
+/**
+ * Composition root of the bridge: loads stores and settings, wires the Eve
+ * process, the addon transport, the agent and desktop servers, and returns
+ * `{ state, receive, stop }`.
+ *
+ * Cleanup is registered with `resources.defer` and runs in reverse (LIFO), so
+ * the registration order below is the shutdown order read bottom-up. Orderings
+ * that matter:
+ * - The publish and integration timers and the desktop server stop first,
+ *   then Eve's health checks, so nothing new starts.
+ * - Pending account work settles before Eve stops; Eve is stopped (after its
+ *   engine preparation settles) before its log file closes.
+ * - The agent server closes and the transport disconnects before turns
+ *   drain, and turns drain before the publisher stops, chats are flushed and
+ *   the database closes (last).
+ */
 export async function startBridge(options: BridgeOptions = {}) {
   const resources = new RuntimeResources();
+  // Set by stop() or a desktop stop request; checked by everything that
+  // starts work, so nothing new begins while resources close.
+  let shutdownRequested = false;
   try {
     const ROOT =
       options.resourceRoot ||
@@ -98,35 +118,11 @@ export async function startBridge(options: BridgeOptions = {}) {
         : [];
       return { status: 'available', entries: [...preferences, ...character] };
     }
-    const configSchema = z.object({
-      wow: z.string().min(1).optional(),
-      // Earlier installers saved an empty string before model selection.
-      model: z.preprocess(
-        (value) => (value === '' ? undefined : value),
-        z.string().min(1).optional(),
-      ),
-      mcpConfig: z.string().min(1).optional(),
-    });
-    let config = await readJson<z.infer<typeof configSchema>>(
-      paths.config,
-      configSchema,
-      () => ({}),
-    );
-    const defaultModel = () => config.model || DEFAULT_MODEL;
-    let configWrite = Promise.resolve();
-    function updateConfig(patch: Partial<typeof config>) {
-      const write = configWrite
-        .catch(() => {})
-        .then(async () => {
-          const next = { ...config, ...patch };
-          await writeJson(paths.config, next);
-          config = next;
-        });
-      configWrite = write;
-      return write;
-    }
-    const mcpFile = config.mcpConfig
-      ? path.resolve(paths.dataRoot, config.mcpConfig)
+    const config = await loadBridgeConfig(paths.config);
+    const defaultModel = config.defaultModel;
+    const mcpConfig = config.get().mcpConfig;
+    const mcpFile = mcpConfig
+      ? path.resolve(paths.dataRoot, mcpConfig)
       : path.join(runtime, 'mcp.json');
     const vault = options.vault || new NativeVault(paths.desktopExecutable);
     const mcpManager = new McpManager(mcpFile, ROOT, vault);
@@ -143,21 +139,6 @@ export async function startBridge(options: BridgeOptions = {}) {
     const webSearch = new WebSearch(path.join(runtime, 'search.json'), vault, auth);
     await webSearch.load();
     resources.defer(() => auth.cancel());
-    let modelCatalogLoad: Promise<void> | undefined;
-    function refreshModelCatalog() {
-      return (modelCatalogLoad ??= (async () => {
-        try {
-          state.modelCatalog = await connections.models();
-          state.modelCatalogError = undefined;
-        } catch (error) {
-          state.modelCatalog = [];
-          state.modelCatalogError = errorMessage(error);
-        } finally {
-          modelCatalogLoad = undefined;
-          changed();
-        }
-      })());
-    }
     const database = new TheWoWDB();
     const panelStore = new PanelStore(applicationDatabase);
     await panelStore.load();
@@ -173,57 +154,9 @@ export async function startBridge(options: BridgeOptions = {}) {
       status: simulatorAvailable ? 'ready' : 'missing',
       reason: 'Experimental local mage engine, levels 1–60.',
     });
-    function refreshMcpCatalog() {
-      const catalog = defaultCapabilities();
-      for (const server of mcpManager.list()) {
-        const url = server.url ? new URL(server.url) : undefined;
-        if (url) {
-          url.username = '';
-          url.password = '';
-          url.search = '';
-          url.hash = '';
-        }
-        catalog.push({
-          id: 'mcp:' + server.name,
-          kind: 'mcp',
-          name: server.name,
-          group: 'integrations',
-          defaultEnabled: server.enabled,
-          description:
-            (server.description || server.name) + ' - ' + (url?.toString() || 'Local stdio server'),
-        });
-        for (const tool of server.tools || []) {
-          catalog.push({
-            id: 'mcp_tool:' + server.name + ':' + tool.name,
-            name: tool.name,
-            group: 'integrations',
-            parent: 'mcp:' + server.name,
-            description: (tool.description || tool.name).slice(0, 500),
-          });
-        }
-      }
-      capabilitySettings.catalog = catalog;
-    }
-    refreshMcpCatalog();
-    for (const server of mcpManager.list()) {
-      await mcpManager.setEnabled(server.name, capabilitySettings.configured('mcp:' + server.name));
-    }
-    async function setCapability(id: string, enabled: boolean) {
-      const server = id.startsWith('mcp:')
-        ? mcpManager.list().find((server) => id === 'mcp:' + server.name)
-        : undefined;
-      if (server) {
-        await mcpManager.setEnabled(server.name, enabled);
-      }
-      try {
-        await capabilitySettings.set(id, enabled);
-      } catch (error) {
-        if (server) {
-          await mcpManager.setEnabled(server.name, server.enabled);
-        }
-        throw error;
-      }
-    }
+    const mcpCapabilities = createMcpCapabilities(mcpManager, capabilitySettings);
+    mcpCapabilities.refreshCatalog();
+    await mcpCapabilities.applySavedSettings();
     await capabilitySettings.publish();
     const mcpRelay = new McpRelay(
       mcpManager,
@@ -246,11 +179,37 @@ export async function startBridge(options: BridgeOptions = {}) {
         await chatStore.close();
       }
     });
+    const refreshModelCatalog = createModelCatalogRefresh({ state, connections, changed });
+    const accounts = createAccountOperations({
+      isStopping: () => shutdownRequested,
+      hasActiveTurn: () => state.chats.some((c) => c.status === 'working'),
+      afterOperation: () => void refreshModelCatalog(),
+    });
     const snapshots = new SnapshotGate();
-    let eveReady = false;
-    let contextWindowTokens: number | undefined;
-    let dirty = true;
-    const publisher = createPublishScheduler(() => publishSnapshot());
+    const publisher = createSnapshotPublisher({
+      state,
+      snapshots,
+      transport: () => transport.current(),
+      inputs: () => {
+        const character = state.currentCharacterKey;
+        return {
+          connected: eve.isReady(),
+          bridgeVersion,
+          expectedAddonVersion,
+          contextWindowTokens: eve.contextWindowTokens(),
+          defaultModel: defaultModel(),
+          panels: character ? panelStore.list(character) : [],
+          routines: character ? routineStore.list(character) : [],
+          routineRuns: character
+            ? routineStore.history({ characterKey: character, includeSilent: false, limit: 50 })
+            : [],
+          routinesAllowed: !!character && capabilitySettings.enabled('tool:manage_routine'),
+          capabilities: capabilitySettings.snapshot(),
+          requests: pending.snapshot(),
+        };
+      },
+      logger,
+    });
     resources.defer(() => publisher.stop());
     const pending = new GameRequests(changed);
     resources.defer(() => pending.cancelAll('Bridge stopped'));
@@ -261,6 +220,25 @@ export async function startBridge(options: BridgeOptions = {}) {
         baseUrl: 'http://127.0.0.1:43186',
         auth: { bearer: () => token },
       });
+    const eve = createEveLifecycle({
+      agentRoot: paths.agent,
+      engineRoot: paths.engine,
+      logPath: path.join(runtime, 'eve.log'),
+      environment: () => ({
+        ...process.env,
+        WOW_BRIDGE_TOKEN: token,
+        WOW_BRIDGE_URL: agentOrigin,
+        WOW_CAPABILITIES_FILE: capabilitySettings.agentFile,
+        WOW_MCP_CONFIG: mcpFile,
+        ...(config.get().model ? { WOW_MODEL: config.get().model } : {}),
+        DO_NOT_TRACK: '1',
+      }),
+      client,
+      startAgent: options.startAgent,
+      changed,
+      isStopping: () => shutdownRequested,
+      logger,
+    });
     async function readSimulationCharacter(chat = 'desktop-simulation'): Promise<unknown> {
       if (!state.activeTransport || !capabilitySettings.enabled('tool:query_character')) {
         throw Error('Connect WoW and enable Character readings first.');
@@ -273,16 +251,11 @@ export async function startBridge(options: BridgeOptions = {}) {
     }
     mcpRelay.readOnlyMode = () => state.chats.some((c) => c.proactive && c.status === 'working');
     function changed() {
-      dirty = true;
-      publisher.schedule();
+      publisher.changed();
       if (!shutdownRequested) {
         chatStore.schedule(() => state.chats);
       }
     }
-    function chatFor(id: string | undefined) {
-      return state.chats.find((c) => c.id === id);
-    }
-    let shutdownRequested = false;
     const run = createTurnRunner({
       telemetry,
       client,
@@ -293,15 +266,11 @@ export async function startBridge(options: BridgeOptions = {}) {
       currentTransport: () => state.activeTransport,
       activeChat: () => state.activeChat,
       defaultModel,
-      isReady: () => eveReady,
+      isReady: () => eve.isReady(),
       isStopping: () => shutdownRequested,
-      accountBusy: () => accountBusy,
+      accountBusy: accounts.busy,
       isCurrent: (chat) => state.chats.includes(chat),
-      flushSnapshot: () =>
-        queueMicrotask(() => {
-          dirty = true;
-          publishSnapshot();
-        }),
+      flushSnapshot: publisher.flush,
     });
     resources.defer(async () => {
       state.chats.forEach(run.interrupt);
@@ -315,7 +284,7 @@ export async function startBridge(options: BridgeOptions = {}) {
       changed,
       logger,
       isStopping: () => shutdownRequested,
-      isReady: () => eveReady,
+      isReady: () => eve.isReady(),
     });
     resources.defer(stopRoutineScheduler);
     const receivePacket = createPacketReceiver({
@@ -329,16 +298,12 @@ export async function startBridge(options: BridgeOptions = {}) {
       routineStore,
       panelStore,
       memoryStore,
-      transport: () => transport,
+      transport: () => transport.current(),
       refreshModelCatalog,
-      setCapability,
+      setCapability: mcpCapabilities.setCapability,
       memorySnapshot,
       run,
-      flushAcknowledgment: () =>
-        queueMicrotask(() => {
-          dirty = true;
-          publishSnapshot();
-        }),
+      flushAcknowledgment: publisher.flush,
       interrupt: run.interrupt,
       runtime,
       changed,
@@ -352,62 +317,19 @@ export async function startBridge(options: BridgeOptions = {}) {
         telemetry.gameConnectionStarted();
       }
     };
-    let transport: DiskTransport | undefined;
-    let transportWork = Promise.resolve();
-
-    function logTransportError(error: unknown) {
-      logger.error(
-        { event: 'transport.failed', error: errorMessage(error) },
-        'Game transport failed',
-      );
-    }
-
-    function withTransport(work: () => Promise<void>) {
-      const operation = transportWork.catch(() => {}).then(work);
-      transportWork = operation;
-      return operation;
-    }
-
-    async function disconnectTransport() {
-      const previous = transport;
-      transport = undefined;
-      state.activeTransport = '';
-      state.firstReadyRevision = 0;
-      state.currentCharacterKey = undefined;
-      state.routinePresence = undefined;
-      state.memoryViewRequest = undefined;
-      pending.cancelAll('The connection to WoW changed. Try again after reconnecting.');
-      integrationState.reset();
-      snapshots.invalidate();
-      changed();
-      await previous?.stop();
-      await capabilitySettings.publish().catch(logTransportError);
-    }
-
-    async function connectTransport(wow: string | undefined, save = false) {
-      if (shutdownRequested || transport?.wow === wow) return;
-      await disconnectTransport();
-      if (!wow || !existsSync(path.join(wow, 'Interface/AddOns/WispAI/WispAI.toc'))) {
-        if (save) throw Error('The Wisp addon is missing from the selected WoW folder.');
-        return;
-      }
-      const next = new DiskTransport(
-        wow,
-        (packet) => {
-          if (transport === next) receive(packet);
-        },
-        logTransportError,
-      );
-      transport = next;
-      try {
-        await next.start();
-        if (save) await updateConfig({ wow });
-      } catch (error) {
-        await disconnectTransport();
-        throw error;
-      }
-    }
-    resources.defer(() => withTransport(disconnectTransport));
+    const transport = createTransportConnection({
+      state,
+      pending,
+      integrationState,
+      snapshots,
+      capabilitySettings,
+      receive,
+      saveWow: (wow) => config.update({ wow }),
+      changed,
+      isStopping: () => shutdownRequested,
+      logger,
+    });
+    resources.defer(() => transport.serialize(transport.disconnect));
     const server = createServer(
       createAgentHandler({
         logger,
@@ -439,142 +361,29 @@ export async function startBridge(options: BridgeOptions = {}) {
     const agentPort = await listenOnLoopback(server, options.agentPort ?? 43187);
     const agentOrigin = 'http://127.0.0.1:' + agentPort;
     await writeFile(path.join(runtime, 'bridge.pid'), String(process.pid));
-    const eveLog = await import('node:fs').then((fs) =>
-      fs.openSync(path.join(runtime, 'eve.log'), 'a'),
-    );
-    resources.defer(() => closeSync(eveLog));
-    function spawnEve() {
-      return (options.startAgent || startEveProcess)({
-        root: paths.engine,
-        logFile: eveLog,
-        environment: {
-          ...process.env,
-          WOW_BRIDGE_TOKEN: token,
-          WOW_BRIDGE_URL: agentOrigin,
-          WOW_CAPABILITIES_FILE: capabilitySettings.agentFile,
-          WOW_MCP_CONFIG: mcpFile,
-          ...(config.model ? { WOW_MODEL: config.model } : {}),
-          DO_NOT_TRACK: '1',
-        },
-        onError: (error) =>
-          logger.error(
-            { event: 'eve.spawn_failed', error: errorMessage(error) },
-            'Could not start Eve',
-          ),
-        onExit: (code) => {
-          eveReady = false;
-          changed();
-          logger.info({ event: 'eve.exited', code }, 'Eve exited');
-        },
-      });
-    }
-    let eve: ReturnType<typeof spawnEve> | undefined;
-    let enginePrepared = false;
-    function startEve() {
-      if (!enginePrepared) return;
-      try {
-        eve = spawnEve();
-      } catch (error) {
-        logger.error(
-          { event: 'eve.spawn_failed', error: errorMessage(error) },
-          'Could not start Eve',
-        );
-      }
-    }
-    async function killEve() {
-      if (eve) {
-        await stopEveProcess(eve);
-        eve = undefined;
-      }
-      eveReady = false;
-    }
-    const engineStartup = prepareEngine(paths.agent, paths.engine)
-      .then(() => {
-        enginePrepared = true;
-        if (!shutdownRequested) startEve();
-      })
-      .catch((error) => {
-        logger.error(
-          { event: 'eve.prepare_failed', error: errorMessage(error) },
-          'Could not prepare Eve',
-        );
-      });
+    eve.openLog();
+    resources.defer(() => eve.closeLog());
+    const engineStartup = eve.prepare();
+    // Registered after closeLog, so it runs first: Eve is stopped before its log closes.
     resources.defer(async () => {
       await engineStartup;
-      await killEve();
+      await eve.stop();
     });
-    let accountBusy = false;
-    let accountWork: Promise<unknown> | undefined;
-    resources.defer(async () => {
-      await accountWork;
-    });
-    async function accountOperation<T>(operation: () => Promise<T>) {
-      if (shutdownRequested || accountBusy || state.chats.some((c) => c.status === 'working')) {
-        throw Error('Wait for the active operation to finish.');
-      }
-      accountBusy = true;
-      try {
-        const work = operation();
-        accountWork = work;
-        return await work;
-      } finally {
-        accountBusy = false;
-        accountWork = undefined;
-        if (!shutdownRequested) {
-          void refreshModelCatalog();
-        }
-      }
-    }
-    const health = setInterval(() => {
-      if (!eve) return;
-      const current = eve;
-      void client
-        .health()
-        .then(async () => {
-          if (eve === current && !eveReady) {
-            let windowTokens: number | undefined;
-            try {
-              const info = await client.info();
-              const window = info.agent.model?.contextWindowTokens;
-              if (typeof window === 'number' && Number.isSafeInteger(window) && window > 0) {
-                windowTokens = window;
-              }
-            } catch {
-              // Unknown capacity is displayed as unknown, never a made-up limit.
-            }
-            if (eve !== current || current.exitCode !== null || current.signalCode !== null) return;
-            contextWindowTokens = windowTokens;
-            eveReady = true;
-            changed();
-            logger.info({ event: 'eve.ready' }, 'Eve ready');
-          }
-        })
-        .catch(() => {
-          if (eve === current && eveReady) {
-            eveReady = false;
-            changed();
-          }
-        });
-    }, 3000);
-    resources.defer(() => clearInterval(health));
-    function gameConnected() {
-      return Boolean(
-        state.activeTransport &&
-        state.firstReadyRevision &&
-        transport &&
-        transport.peerRevision >= state.firstReadyRevision,
-      );
-    }
+    resources.defer(() => accounts.drain());
+    resources.defer(eve.startHealthChecks());
     function observeGameConnection() {
-      telemetry.gameConnectionProgress(gameConnected(), Boolean(state.firstReadyRevision));
+      telemetry.gameConnectionProgress(
+        transport.gameConnected(),
+        Boolean(state.firstReadyRevision),
+      );
     }
     function desktopStatus(): Status {
       return {
-        ready: eveReady,
-        gameConnected: gameConnected(),
+        ready: eve.isReady(),
+        gameConnected: transport.gameConnected(),
         auth: auth.state(),
         connections: connections.list(),
-        modelConnected: connections.connected(config.model || ''),
+        modelConnected: connections.connected(config.get().model || ''),
         search: webSearch.state(),
         model: defaultModel(),
         activeTurns: state.chats.filter((c) => c.status === 'working').length,
@@ -599,21 +408,21 @@ export async function startBridge(options: BridgeOptions = {}) {
       mcpManager,
       panelStore,
       routineStore,
-      accountOperation,
+      accountOperation: accounts.run,
       readSimulationCharacter,
-      setCapability,
-      refreshMcpCatalog,
+      setCapability: mcpCapabilities.setCapability,
+      refreshMcpCatalog: mcpCapabilities.refreshCatalog,
       changed,
       setWowTransport: (input) =>
-        withTransport(async () => {
+        transport.serialize(async () => {
           if (shutdownRequested) throw Error('Wisp is stopping.');
           if (input.action === 'pause') {
             if (state.chats.some((chat) => chat.status === 'working')) {
               throw Error('Wait for the active turn before installing the addon.');
             }
-            await disconnectTransport();
+            await transport.disconnect();
           } else {
-            await connectTransport(input.wow ?? config.wow, input.wow !== undefined);
+            await transport.connect(input.wow ?? config.get().wow, input.wow !== undefined);
           }
         }),
       getStatus: desktopStatus,
@@ -630,14 +439,8 @@ export async function startBridge(options: BridgeOptions = {}) {
         if (shutdownRequested) {
           throw Error('Wisp is stopping.');
         }
-        await updateConfig({ model });
-        if (!enginePrepared) return;
-        await killEve();
-        if (shutdownRequested) {
-          return;
-        }
-        startEve();
-        changed();
+        await config.update({ model });
+        await eve.restart();
       },
       requestStop: () => {
         shutdownRequested = true;
@@ -658,7 +461,7 @@ export async function startBridge(options: BridgeOptions = {}) {
     const transportStartup =
       options.deferWowTransport || process.env.WISP_DEFER_WOW_TRANSPORT === '1'
         ? Promise.resolve()
-        : withTransport(() => connectTransport(config.wow)).catch(logTransportError);
+        : transport.serialize(() => transport.connect(config.get().wow)).catch(transport.logError);
     const integrationHealth = setInterval(() => {
       const before = JSON.stringify(capabilitySettings.snapshot());
       integrationState.refresh();
@@ -675,99 +478,12 @@ export async function startBridge(options: BridgeOptions = {}) {
       }
     }, 30000);
     resources.defer(() => clearInterval(integrationHealth));
-    function publishSnapshot() {
-      if (!transport || !dirty || !state.activeTransport) {
-        return;
-      }
-      dirty = false;
-      const snapshot = snapshots.next({
-        v: 1,
-        session: state.activeTransport,
-        connected: eveReady,
-        bridgeVersion,
-        expectedAddonVersion,
-        contextPolicy: {
-          windowTokens:
-            state.modelCatalog.find(
-              (m) => m.slug === chatFor(state.activeChat)?.modelSettings?.model,
-            )?.contextWindow || contextWindowTokens,
-          compactAt: COMPACTION_THRESHOLD,
-        },
-        modelCatalog: {
-          models: state.modelCatalog,
-          defaultModel: defaultModel(),
-          error: state.modelCatalogError,
-        },
-        acks: state.acknowledgments,
-        questRevision: state.questRevision || 0,
-        characterRevision: state.characterRevision || 0,
-        activeChat: state.activeChat,
-        ...projectChats(state),
-        panels: state.currentCharacterKey ? panelStore.list(state.currentCharacterKey) : [],
-        panelCommand: state.panelCommand,
-        routineCommand: state.routineCommand,
-        routines: state.currentCharacterKey
-          ? routineStore.list(state.currentCharacterKey).map((r) => ({
-              id: r.id,
-              title: r.title,
-              enabled: r.enabled,
-              // Short, human trigger text for the addon's Routines page.
-              trigger: r.triggers.map(describeRoutineTrigger).join(' or ').slice(0, 160),
-              // What the routine asks Wisp to do, shortened for the routine's detail page.
-              instruction: r.instruction.slice(0, 280),
-              lastStartedAt: r.lastStartedAt,
-            }))
-          : [],
-        routineRuns: state.currentCharacterKey
-          ? routineStore
-              .history({ characterKey: state.currentCharacterKey, includeSilent: false, limit: 50 })
-              .map(({ summary: _summary, ...r }) => r)
-          : [],
-        routineSubscriptions:
-          state.currentCharacterKey && capabilitySettings.enabled('tool:manage_routine')
-            ? [
-                ...new Set(
-                  routineStore
-                    .list(state.currentCharacterKey)
-                    .filter((r) => r.enabled)
-                    .flatMap((r) =>
-                      r.triggers.filter((t) => t.kind === 'event').map((t) => t.event),
-                    ),
-                ),
-              ].map((event) => ({ event, native: routineEvents[event].native }))
-            : [],
-        routinesEnabled:
-          !!state.currentCharacterKey &&
-          capabilitySettings.enabled('tool:manage_routine') &&
-          routineStore.list(state.currentCharacterKey).some((r) => r.enabled),
-        memory: state.memoryView,
-        capabilities: {
-          entries: capabilitySettings.snapshot(),
-          acks: state.capabilityAcks,
-          error: state.capabilityError,
-        },
-        requests: pending.snapshot(),
-      });
-      if (snapshot && eveReady && !state.firstReadyRevision) {
-        state.firstReadyRevision = snapshot.rev;
-      }
-      if (snapshot) {
-        void transport.publish(snapshot).catch((error) => {
-          snapshots.invalidate();
-          dirty = true;
-          logger.warn(
-            { event: 'transport.publish_failed', error: errorMessage(error) },
-            'Failed to publish reply',
-          );
-        });
-      }
-    }
     // Snapshots publish from changed(); this tick only polls what has no event:
     // the addon's acknowledged revision, and a publish that is still dirty
     // because the transport was missing or its last write failed.
     const publish = setInterval(() => {
       observeGameConnection();
-      if (dirty) publisher.schedule();
+      publisher.retry();
     }, PUBLISH_MIN_INTERVAL_MS);
     logger.info({ event: 'bridge.started', version: bridgeVersion }, 'Wisp started');
     resources.defer(() => clearInterval(publish));
