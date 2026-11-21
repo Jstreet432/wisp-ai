@@ -2,6 +2,10 @@
 
 <!-- Add user-facing notes for the next stable release here. -->
 
+## New
+
+- Ask Wisp why you died. Wisp now keeps the game's Death Recap for your last 5 deaths and reads the game's damage meter, so it can explain what killed you or a group member and what hit hardest in your last fight. Recaps start at login or reload and are not saved between sessions. Group deaths and fight totals need the game's damage meter turned on and are available after combat.
+
 ## Improved
 
 - Wisp can now create macros with any command, including `/run`, `/click`, `/console`, chat commands and short aliases like `/tar`. Wisp explains what script, click and chat lines do, so review the code before you put the macro on a bar.
