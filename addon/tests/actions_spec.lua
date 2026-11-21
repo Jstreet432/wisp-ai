@@ -138,6 +138,24 @@ it(
     end
 )
 
+it("realmless WoW Forever clients still place and undo their own map pins", function()
+    local env = helper.env()
+    setfenv(1, env)
+    setup(env)
+    function GetRealmName()
+        return ""
+    end
+    identity = { name = "Mage", realm = "" }
+
+    waypoint = nil
+    local r = act("set_waypoint", { mapId = 1, x = 60, y = 40, label = "NPC", source = "user" })
+    assert(r.status == "completed" and r.data.applied, r.error)
+    assert(ns.db.wispWaypoint.realm == "")
+    assert(act("clear_waypoint").status == "completed" and waypoint == nil)
+    identity = { name = "Mage", realm = "Realm" }
+    assert(act("set_waypoint", { mapId = 1, x = 1, y = 1, source = "user" }).status == "blocked")
+end)
+
 it("Forever plain-coordinate waypoint readings preserve placement, metadata and undo", function()
     local env = helper.env()
     setfenv(1, env)
