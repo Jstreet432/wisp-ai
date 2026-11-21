@@ -13,7 +13,15 @@ local function clone(value)
 end
 local function matches(panel)
     local ok, key = pcall(C_EncodingUtil.DeserializeJSON, panel.characterKey or "")
-    return ok and type(key) == "table" and key[2] == GetRealmName() and key[3] == UnitName("player")
+    if not ok or type(key) ~= "table" then
+        return false
+    end
+    -- [game, guid] follows the character; older [game, realm, name] keys
+    -- match realm and name.
+    if #key == 2 then
+        return key[2] == UnitGUID("player")
+    end
+    return key[2] == GetRealmName() and key[3] == UnitName("player")
 end
 local function keyFor(panel)
     return panel.characterKey .. ":" .. panel.id
@@ -21,6 +29,12 @@ end
 local function stateFor(panel)
     ns.db.panelState = ns.db.panelState or {}
     local key = keyFor(panel)
+    -- The bridge names the pre-GUID key a panel moved from, so its position
+    -- and visibility follow it to the character's GUID key.
+    local former = type(panel.formerKey) == "string" and panel.formerKey .. ":" .. panel.id
+    if not ns.db.panelState[key] and former and ns.db.panelState[former] then
+        ns.db.panelState[key], ns.db.panelState[former] = ns.db.panelState[former], nil
+    end
     ns.db.panelState[key] = ns.db.panelState[key] or {}
     return ns.db.panelState[key]
 end

@@ -3,6 +3,8 @@ import { RuntimeResources } from './runtime-resources.ts';
 import { UsageTelemetry } from './telemetry.ts';
 import { startRoutineScheduler } from './routines/routine-scheduler.ts';
 import { createPacketReceiver } from './addon/packet-receiver.ts';
+import { createCharacterAdoption } from './chat/character-adoption.ts';
+import { readCharacterNames } from './db/character-keys.ts';
 import { createSessionState } from './session-state.ts';
 import { createDesktopApp } from './desktop/desktop-handler.ts';
 import type { Status } from '@wisp/protocol/desktop';
@@ -291,6 +293,13 @@ export async function startBridge(options: BridgeOptions = {}) {
       isReady: () => eve.isReady(),
     });
     resources.defer(stopRoutineScheduler);
+    const adoptCharacter = createCharacterAdoption({
+      database: applicationDatabase,
+      panelStore,
+      chats: () => state.chats,
+      changed,
+      logger,
+    });
     const receivePacket = createPacketReceiver({
       telemetry,
       state,
@@ -308,6 +317,7 @@ export async function startBridge(options: BridgeOptions = {}) {
       memorySnapshot,
       run,
       flushAcknowledgment: publisher.flush,
+      adoptCharacter,
       interrupt: run.interrupt,
       runtime,
       changed,
@@ -383,6 +393,7 @@ export async function startBridge(options: BridgeOptions = {}) {
       );
     }
     function desktopStatus(): Status {
+      const characters = readCharacterNames(applicationDatabase.orm);
       return {
         ready: eve.isReady(),
         gameConnected: transport.gameConnected(),
@@ -399,10 +410,11 @@ export async function startBridge(options: BridgeOptions = {}) {
         })),
         panels: panelStore.panels.map((p) => ({
           ...p,
-          character: characterLabel(p.characterKey, ' - '),
+          character: characterLabel(p.characterKey, characters, ' - '),
         })),
         routines: routineStore.list(),
         routineRuns: routineStore.history({ includeSilent: false, limit: 200 }),
+        characters,
       };
     }
     const desktopApp = createDesktopApp({

@@ -13,6 +13,17 @@ export class PanelStore {
     await this.database.initializeProducts();
     this.panels = readPanels(this.database.orm);
   }
+  /**
+   * Re-read after another writer changed panel rows: now, and again after any
+   * mutation already in flight, which would otherwise restore its own copy.
+   */
+  refresh() {
+    this.panels = readPanels(this.database.orm);
+    const reload = this.queue.catch(() => {}).then(() => this.load());
+    // Nobody awaits this reload; a failure only leaves the cache from just now.
+    reload.catch(() => {});
+    this.queue = reload;
+  }
   list(characterKey: string) {
     return this.panels.filter((p) => p.characterKey === characterKey);
   }
@@ -22,19 +33,25 @@ export class PanelStore {
       .then(async () => {
         await this.database.initializeProducts();
         this.panels = await this.database.transaction((db) => {
-          const next = readPanels(db).filter(
-            (p) =>
-              !(
-                p.characterKey === characterKey &&
-                p.id ===
-                  (input.operation === 'save' ? input.panel.id : 'id' in input ? input.id : '')
-              ),
-          );
+          const id = input.operation === 'save' ? input.panel.id : 'id' in input ? input.id : '';
+          const all = readPanels(db);
+          const previous = all.find((p) => p.characterKey === characterKey && p.id === id);
+          const next = all.filter((p) => p !== previous);
           if (input.operation === 'save') {
-            if (next.filter((p) => p.characterKey === characterKey).length >= 12) {
+            // Only new panels count against the limit, so panels merged past it
+            // can still be edited.
+            if (!previous && next.filter((p) => p.characterKey === characterKey).length >= 12) {
               throw Error('Keep at most 12 panels per character');
             }
-            next.push({ ...panelContent.parse(input.panel), characterKey, updatedAt: Date.now() });
+            // Edits keep the key an adopted panel came from, so the addon can
+            // still move its saved layout if it has not applied the move yet.
+            const formerKey = previous?.formerKey;
+            next.push({
+              ...panelContent.parse(input.panel),
+              characterKey,
+              updatedAt: Date.now(),
+              ...(formerKey ? { formerKey } : {}),
+            });
           } else if (input.operation !== 'remove') {
             return readPanels(db);
           }

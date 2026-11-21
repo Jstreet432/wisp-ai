@@ -495,7 +495,7 @@ export function createAgentApp(deps: AgentDependencies) {
           session: currentTransport(),
           ...(action
             ? {
-                action: { ...action, ...expectedCharacter(chat.characterKey) },
+                action: { ...action, expectedCharacter: expectedCharacter(chat.characterKey) },
               }
             : inspection
               ? { inspection }

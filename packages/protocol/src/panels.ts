@@ -64,4 +64,9 @@ export const panelInput = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('save'), panel: panelContent }),
   z.object({ operation: z.literal('remove'), id: key }),
 ]);
-export type Panel = z.infer<typeof panelContent> & { characterKey: string; updatedAt: number };
+export type Panel = z.infer<typeof panelContent> & {
+  characterKey: string;
+  updatedAt: number;
+  /** The pre-GUID key this panel moved from, so the addon can keep its saved layout. */
+  formerKey?: string;
+};

@@ -18,7 +18,12 @@ import type { RoutineStore } from '../routines/routine-store.ts';
 import type { PanelStore } from './panels.ts';
 import type { MemoryStore } from '../agent/memory-store.ts';
 import type { MemoryView } from '../agent/agent-server.ts';
-import { characterIdentity, TurnContextCache } from '../chat/context.ts';
+import {
+  characterIdentity,
+  characterProfile,
+  TurnContextCache,
+  type CharacterProfile,
+} from '../chat/context.ts';
 import { chooseChatModel } from '../chat/chat-model.ts';
 import { parseConnectionModel } from '@wisp/protocol/providers';
 import { resumeChat, isEmptyDraft } from '../chat/sessions.ts';
@@ -46,6 +51,8 @@ interface ReceiverDependencies {
   runtime: string;
   changed: () => void;
   flushAcknowledgment?: () => void;
+  /** Records a character's name and moves its pre-GUID data before the packet is handled. */
+  adoptCharacter?: (character: CharacterProfile) => void;
   logger: Pick<Logger, 'info' | 'warn'>;
 }
 export function createPacketReceiver(deps: ReceiverDependencies) {
@@ -276,7 +283,11 @@ export function createPacketReceiver(deps: ReceiverDependencies) {
       return;
     }
     if (packet.context) {
-      state.currentCharacterKey = characterIdentity(packet.context) || state.currentCharacterKey;
+      const character = characterProfile(packet.context);
+      if (character) {
+        state.currentCharacterKey = character.key;
+        deps.adoptCharacter?.(character);
+      }
     }
     if (packet.type === 'routine_tick' || packet.type === 'routine_event') {
       const identity = characterIdentity(packet.context);
@@ -407,7 +418,7 @@ export function createPacketReceiver(deps: ReceiverDependencies) {
             args: undo
               ? { transactionId: node.action.transactionId }
               : { operation: 'apply', transactionId: node.action.transactionId },
-            ...expectedCharacter(identity ?? chat.characterKey),
+            expectedCharacter: expectedCharacter(identity ?? chat.characterKey),
           };
           chat.status = 'working';
           changed();
