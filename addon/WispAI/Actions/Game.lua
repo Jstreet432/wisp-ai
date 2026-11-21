@@ -177,8 +177,16 @@ function actions.create_macro(args)
     }
 end
 function ns.Actions.PerformAction(action)
-    local expected = action and action.expectedCharacter
-    if not expected or expected.name ~= UnitName("player") or expected.realm ~= GetRealmName() then
+    if type(action) ~= "table" then
+        return { status = "unavailable", error = "Unknown action" }
+    end
+    -- Requests only arrive for this addon session, and a character switch
+    -- starts a new one. The expected character is an extra check when known.
+    local expected = action.expectedCharacter
+    if
+        expected
+        and (expected.name ~= UnitName("player") or expected.realm ~= (GetRealmName() or ""))
+    then
         return {
             status = "blocked",
             error = "Character identity changed; request the action again for the current character",

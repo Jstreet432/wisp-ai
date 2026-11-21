@@ -1,4 +1,4 @@
-import { parseCharacterKey } from '@wisp/protocol/character-key';
+import { expectedCharacter } from '@wisp/protocol/character-key';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { Hono, type Context } from 'hono';
@@ -470,11 +470,10 @@ export function createAgentApp(deps: AgentDependencies) {
       if (!capabilitySettings.enabled('tool:' + name)) {
         throw new Error('This tool is disabled in Settings');
       }
-      if (action && !chat.characterKey) {
-        throw new Error('A fresh character identity is required before applying an action');
-      }
+      // A character switch reloads the addon and replaces its transport, which
+      // `tool` already rejects. The expected character is a second check that
+      // is sent only when the turn knew who was playing.
       const stateRequest = !inspection && !action ? rpcRequests.state.parse(raw) : undefined;
-      const identity = action ? parseCharacterKey(chat.characterKey!) : undefined;
       const abort = signal();
       if (stateRequest) {
         return queryCharacterSections(
@@ -496,10 +495,7 @@ export function createAgentApp(deps: AgentDependencies) {
           session: currentTransport(),
           ...(action
             ? {
-                action: {
-                  ...action,
-                  expectedCharacter: { realm: identity!.realm, name: identity!.name },
-                },
+                action: { ...action, ...expectedCharacter(chat.characterKey) },
               }
             : inspection
               ? { inspection }

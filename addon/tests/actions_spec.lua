@@ -236,6 +236,20 @@ it("unsupported maps and character switches never apply actions", function()
     )
 end)
 
+it("actions without an expected character run in the current addon session", function()
+    local env = helper.env()
+    setfenv(1, env)
+    setup(env)
+
+    waypoint = nil
+    local r = ns.Actions.PerformAction({
+        kind = "set_waypoint",
+        args = { mapId = 1, x = 60, y = 40, label = "NPC", source = "user" },
+    })
+    assert(r.status == "completed" and r.data.applied, r.error)
+    assert(ns.Actions.PerformAction(nil).status == "unavailable")
+end)
+
 it("optional navigation failures do not hide a successfully placed and verified pin", function()
     local env = helper.env()
     setfenv(1, env)
