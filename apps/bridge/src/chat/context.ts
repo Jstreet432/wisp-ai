@@ -37,7 +37,8 @@ const characterSummary = z.object({
   status: z.literal('available'),
   data: z.object({
     name: z.string().min(1),
-    realm: z.string().min(1),
+    // WoW Forever has no realms, so the client reports an empty one.
+    realm: z.string(),
     level: z.number().optional(),
     class: z.string().optional(),
     race: z.string().optional(),
@@ -215,8 +216,7 @@ export function characterIdentity(value: unknown): string | undefined {
     section.status !== 'available' ||
     typeof data.name !== 'string' ||
     !data.name ||
-    typeof data.realm !== 'string' ||
-    !data.realm
+    typeof data.realm !== 'string'
   ) {
     return;
   }

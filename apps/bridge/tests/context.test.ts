@@ -112,6 +112,28 @@ test('character revision references preserve fresh identity without reusing unkn
   unavailable(cache.resolve({ ...reference, sections: { character: { status: 'unavailable' } } }));
 });
 
+test('realmless WoW Forever characters keep a fresh identity across cached turns', () => {
+  const character = {
+    status: 'available',
+    data: { name: 'Fedrath', realm: '', level: 20, game: 'WoW Forever' },
+  };
+  assert.equal(
+    characterIdentity({ sections: { character } }),
+    JSON.stringify(['WoW Forever', '', 'Fedrath']),
+  );
+  const cache = new TurnContextCache();
+  cache.resolve({ characterRevision: 1, sections: { character } });
+  assert.equal(cache.characterRevision, 1);
+  assert.equal(
+    characterIdentity(cache.resolve({ characterRevision: 1, sections: {} })),
+    JSON.stringify(['WoW Forever', '', 'Fedrath']),
+  );
+  assert.equal(
+    characterIdentity({ sections: { character: { status: 'available', data: { name: 'X' } } } }),
+    undefined,
+  );
+});
+
 test('quests stay out of every prompt and are returned from local memory only when requested', async () => {
   const context = {
     capturedAt: 100,
