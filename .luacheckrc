@@ -96,6 +96,7 @@ read_globals = {
     "PickupMacro",
     "PixelUtil",
     "PlaySound",
+    "Polestar",
     "QuestMapFrame_OpenToQuestDetails",
     "Questie",
     "QuestieLoader",

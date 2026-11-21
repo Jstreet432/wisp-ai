@@ -7,6 +7,7 @@ const addonReport = z.object({
 const reportSchema = z.object({
   syndicator: addonReport.optional(),
   auctionator: addonReport.optional(),
+  polestar: addonReport.extend({ guides: z.boolean().optional().default(false) }).optional(),
   version: z.string().max(80),
   questie: z.object({
     status: z.enum(['ready', 'partial', 'missing', 'incompatible']),
@@ -88,7 +89,7 @@ export class IntegrationState {
                 : 'Your installed QuestieDB does not provide this data.',
       });
     }
-    for (const id of ['syndicator', 'auctionator'] as const) {
+    for (const id of ['syndicator', 'auctionator', 'polestar'] as const) {
       const addon = live ? this.report![id] : undefined;
       this.settings.availability.set('integration:' + id, {
         available: !!addon && ['ready', 'partial'].includes(addon.status),
@@ -104,8 +105,25 @@ export class IntegrationState {
                 ? 'The addon has not finished initializing.'
                 : id === 'syndicator'
                   ? 'Saved inventory may be out of date.'
-                  : 'Prices reflect the last scan. Their age is shown when available.',
+                  : id === 'polestar'
+                    ? addon.status === 'partial'
+                      ? 'Only the guide and step number are available in this Polestar version.'
+                      : undefined
+                    : 'Prices reflect the last scan. Their age is shown when available.',
       });
     }
+    const polestar = live ? this.report!.polestar : undefined;
+    const guides = !!polestar && ['ready', 'partial'].includes(polestar.status) && polestar.guides;
+    this.settings.availability.set('tool:create_guide', {
+      available: guides,
+      status: !polestar ? 'waiting' : guides ? 'ready' : 'unavailable',
+      reason: guides
+        ? undefined
+        : !polestar
+          ? 'Waiting for WoW.'
+          : polestar.status === 'missing'
+            ? 'Install or enable Polestar.'
+            : 'Your installed Polestar does not offer its guide API.',
+    });
   }
 }

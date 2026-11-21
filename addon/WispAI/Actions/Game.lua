@@ -201,6 +201,9 @@ function ns.Actions.PerformAction(action)
     if action.kind == "update_settings" then
         apply = ns.Settings.UpdateSettings
     end
+    if action.kind == "polestar_guide" then
+        apply = ns.Integrations.CreatePolestarGuide
+    end
     if action.kind == "undo_settings" then
         apply = function(args)
             return ns.Settings.ApplySettings(args.transactionId, true)

@@ -82,6 +82,10 @@ events:SetScript("OnEvent", function(_, event, name)
             ns.db.showTools = true
         end
         ns.active = ns.db.activeChat
+        -- Before PLAYER_LOGIN, when Polestar restores its tabs.
+        if ns.Integrations.RestorePolestarGuides then
+            pcall(ns.Integrations.RestorePolestarGuides)
+        end
     elseif event == "PLAYER_LOGIN" then
         ns.UI.BuildUI()
         if ns.Inline.InitInline then
