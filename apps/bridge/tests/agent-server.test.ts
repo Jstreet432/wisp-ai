@@ -88,6 +88,33 @@ test('agent server refuses changes from automatic suggestions and reports the re
   }
 });
 
+test('actions run without a character identity and add the expected character when known', async () => {
+  const unknown = { ...workingChat(), characterKey: undefined };
+  const known = {
+    ...workingChat(),
+    eveId: 'known',
+    characterKey: JSON.stringify(['WoW Forever', '', 'Fedrath']),
+  };
+  const request = vi.fn(async (_input: { action?: unknown }) => ({ status: 'completed' }));
+  const server = await serve({ getChats: () => [unknown, known], pending: { request } as never });
+  const waypoint = {
+    kind: 'set_waypoint',
+    args: { mapId: 1, x: 50, y: 50, label: 'NPC', source: 'user', navigate: true },
+  };
+  try {
+    for (const eveSession of ['eve', 'known']) {
+      const reply = await server.post('/action', { eveSession, action: waypoint });
+      expect(reply.status).toBe(200);
+    }
+    expect(request.mock.calls.map(([input]) => input.action)).toEqual([
+      waypoint,
+      { ...waypoint, expectedCharacter: { realm: '', name: 'Fedrath' } },
+    ]);
+  } finally {
+    await server.close();
+  }
+});
+
 test('agent server aborts game requests when Eve hangs up', async () => {
   const chat = workingChat();
   let seen: AbortSignal | undefined;
