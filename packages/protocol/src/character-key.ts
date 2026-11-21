@@ -5,6 +5,21 @@ export function parseCharacterKey(key: string): { game: string; realm: string; n
   const [game, realm, name] = identity.parse(JSON.parse(key));
   return { game, realm, name };
 }
+/**
+ * The character an action must run as, for the addon to double-check. Empty
+ * when the turn had no identity; the transport session still pins the character.
+ */
+export function expectedCharacter(key: string | undefined): {
+  expectedCharacter?: { realm: string; name: string };
+} {
+  if (!key) return {};
+  try {
+    const { realm, name } = parseCharacterKey(key);
+    return { expectedCharacter: { realm, name } };
+  } catch {
+    return {};
+  }
+}
 export function characterLabel(key: string, separator = ' · '): string {
   try {
     const { name, realm } = parseCharacterKey(key);

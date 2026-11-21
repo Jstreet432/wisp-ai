@@ -1,4 +1,4 @@
-import { parseCharacterKey } from '@wisp/protocol/character-key';
+import { expectedCharacter } from '@wisp/protocol/character-key';
 import type { Client } from 'eve/client';
 import type { Packet } from '@wisp/protocol/protocol';
 import { selectionValues } from '@wisp/protocol/ui-schema';
@@ -398,17 +398,16 @@ export function createPacketReceiver(deps: ReceiverDependencies) {
             throw new Error('This tool is disabled in Settings');
           }
           const identity = characterIdentity(packet.context);
-          if (!identity || identity !== chat.characterKey) {
+          if (identity && chat.characterKey && identity !== chat.characterKey) {
             throw new Error('Character identity changed; ask again for this character');
           }
-          const current = parseCharacterKey(identity),
-            id = randomUUID();
+          const id = randomUUID();
           const action = {
             kind: tool,
             args: undo
               ? { transactionId: node.action.transactionId }
               : { operation: 'apply', transactionId: node.action.transactionId },
-            expectedCharacter: { realm: current.realm, name: current.name },
+            ...expectedCharacter(identity ?? chat.characterKey),
           };
           chat.status = 'working';
           changed();
