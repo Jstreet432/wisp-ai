@@ -15,6 +15,7 @@ import prices from '../apps/agent/agent/tools/auctionator__get_item_prices.ts';
 import guideStep from '../apps/agent/agent/tools/polestar__get_guide_step.ts';
 import createGuide from '../apps/agent/agent/tools/polestar__create_guide.ts';
 import hearthstone from '../apps/agent/agent/tools/wow__inspect_hearthstone.ts';
+import combat from '../apps/agent/agent/tools/wow__read_combat.ts';
 import {
   questChainInput,
   storedItemInput,
@@ -67,6 +68,7 @@ test('actual new Eve definitions follow per-API readiness, parent switches and e
     };
     await settings.publish();
     assert.equal(await resolve(hearthstone), null);
+    assert.equal(await resolve(combat), null);
     for (const definition of [quest, chain, object, stored, prices, guideStep, createGuide]) {
       assert.equal(await resolve(definition), null);
     }
@@ -74,6 +76,7 @@ test('actual new Eve definitions follow per-API readiness, parent switches and e
     assert.ok(state.receive(report));
     await settings.publish();
     assert.ok(await resolve(hearthstone));
+    assert.ok(await resolve(combat));
     for (const definition of [quest, chain, stored, prices, guideStep, createGuide]) {
       assert.ok(await resolve(definition));
     }

@@ -36,7 +36,7 @@ function ns.UI.ConversationStatus.Refresh(chat)
         or (not ns.connected and L["status.openDesktop"])
     -- The sidebar footer shows a healthy connection; the header only reports problems.
     setText(status, problem or "")
-    status:SetShown(problem ~= nil and not ns.db.minimized)
+    status:SetShown(problem and not ns.db.minimized)
     statusMark:SetShown(status:IsShown())
     local usage = chat and chat.usage
     local window = ns.contextPolicy and ns.contextPolicy.windowTokens
@@ -67,7 +67,7 @@ function ns.UI.ConversationStatus.Refresh(chat)
     end
     local visible = not ns.db.minimized
     layoutCrumbs(inRoutine)
-    setText(sessionTitle, place)
+    ns.UI.Widgets.SetContentText(sessionTitle, place, ns.UI.Widgets.FONTS.body)
     sessionTitle:SetTextColor(unpack(inRoutine and ns.UI.Widgets.TEXT or MUTED))
     sessionTitle:SetShown(visible)
     separator:SetShown(visible)
