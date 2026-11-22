@@ -37,6 +37,7 @@ Integrations\Syndicator.lua
 Integrations\Auctionator.lua
 Integrations\PolestarGuides.lua
 Integrations\Polestar.lua
+Integrations\Sources.lua
 ChatHistory\ChatHistory.lua
 Combat\Combat.lua
 Character\TrainingData.lua

@@ -396,6 +396,48 @@ const prices: Record<number, number> = {
   20442: 12000,
 };
 
+// Per-item answers in the shape the bridge's item_sources returns: only names,
+// zones, quest levels and evidence, never details production cannot see. The
+// eval bridge serves these for the requested IDs only.
+const relationKinds: Record<string, string> = {
+  dropped_by: 'drops',
+  drops_from: 'drops',
+  sold_by: 'vendors',
+  reward_from: 'quests',
+  created_by: 'crafted',
+};
+export function itemSourcesFixture() {
+  const ids = [...Object.values(armor), ...Object.values(weapons)].flat().map((entry) => entry.id);
+  return Object.fromEntries(
+    ids.map((itemId) => {
+      const found: Record<string, unknown[]> = {};
+      for (const edge of (sources[itemId] ?? []) as Array<Record<string, any>>) {
+        const kind = relationKinds[String(edge.rel)];
+        if (!kind) {
+          continue;
+        }
+        (found[kind] ??= []).push({
+          kind: edge.kind,
+          name: edge.name,
+          ...(edge.zone ? { zones: [edge.zone] } : {}),
+          ...(edge.level ? { requiredLevel: edge.level } : {}),
+          evidence: edge.rel === 'created_by' ? 'game files, unconfirmed' : 'player-observed',
+        });
+      }
+      return [
+        itemId,
+        {
+          itemId,
+          ...found,
+          auction: prices[itemId] ? { unitPriceCopper: prices[itemId], ageDays: 0 } : undefined,
+          sourceKnown: Object.keys(found).length > 0,
+          sourcesStatus: 'available',
+        },
+      ];
+    }),
+  );
+}
+
 export function fedrathStubs(): ToolStub[] {
   return json([
     {
