@@ -1,11 +1,13 @@
 # Public addon API
 
 Other addons can put a "Review this with Wisp" button on their own UI. Clicking it
-opens Wisp's quick-question popup with a suggested prompt and the addon's data
-attached. The player sees what is attached, edits the prompt if they want, and
-presses Enter. Wisp never sends anything on another addon's behalf.
+opens Wisp's quick-question popup with your prompt and data attached. The player
+sees what is attached, edits the prompt if they want, and presses Enter. Wisp never
+sends anything on another addon's behalf.
 
-That is the whole API. It does not read replies, conversations, memory or chat
+That is the whole API: Wisp gives you a way into its chat, and you write what goes
+in it. Wisp adds no text or translations of its own, so localize your prompt and
+label yourself. The API does not read replies, conversations, memory or chat
 history, register tools, or run game actions.
 
 ## Lua surface
@@ -28,19 +30,19 @@ WispAI.Ask(request) --> true | false, reason
 | Field        | Type   | Required | Limit | Meaning                                                               |
 | ------------ | ------ | -------- | ----- | --------------------------------------------------------------------- |
 | `source`     | string | yes      | 40    | Your addon's name, shown to the player and passed to the model.       |
-| `prompt`     | string | no       | 500   | Text placed in the input box. Default: "Review this", localized.      |
+| `prompt`     | string | yes      | 500   | Text placed in the input box.                                         |
 | `title`      | string | no       | 60    | Popup header after "Ask Wisp ·". Default: `source`.                   |
 | `link`       | string | no       | 255   | One game hyperlink (item, spell, quest, unit), sent as the reference. |
-| `attachment` | table  | no       | —     | `{ label = string?, text = string }`; `label` ≤ 60, `text` ≤ 4000.    |
+| `attachment` | table  | no       | —     | `{ label = string, text = string }`; `label` ≤ 60, `text` ≤ 4000.     |
 
 `false` comes with one of these reasons, and nothing changes in Wisp's UI:
 
-| Reason            | When                                                                   |
-| ----------------- | ---------------------------------------------------------------------- |
-| `unavailable`     | Wisp is not connected to Wisp Desktop, or Desktop needs setup.         |
-| `invalid_request` | A field has the wrong type or is over its limit, or `source` is empty. |
-| `busy`            | The popup is answering a question, or the player typed their own text. |
-| `throttled`       | Another `Ask` was accepted less than a second ago (from any addon).    |
+| Reason            | When                                                                         |
+| ----------------- | ---------------------------------------------------------------------------- |
+| `unavailable`     | Wisp is not connected to Wisp Desktop, or Desktop needs setup.               |
+| `invalid_request` | A field has the wrong type or is over its limit, or a required one is empty. |
+| `busy`            | The popup is answering a question, or the player typed their own text.       |
+| `throttled`       | Another `Ask` was accepted less than a second ago (from any addon).          |
 
 Fields over their limit are rejected rather than cut, because a truncated log would
 mislead the model. Trim your data before calling.
@@ -70,7 +72,7 @@ end
 - The popup opens at the cursor with your prompt in the input box and focus in it.
 - An attachment shows as a chip under the title, e.g. `MyMeter · Last fight · 2.1 KB`.
   Hovering it previews the first lines; its `x` removes the attachment.
-- After sending, the question shows "Attached from MyMeter: Last fight" under it.
+- After sending, the question shows the same `MyMeter · Last fight` line under it.
   The attachment goes with the first question only; follow-ups in the same popup
   rely on the conversation history.
 - Hovering something in the game and pressing the Wisp key replaces your request,

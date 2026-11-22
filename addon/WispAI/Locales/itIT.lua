@@ -271,7 +271,6 @@ ns.Locales.itIT = {
     ["message.toolInput"] = "Input",
     ["message.toolResult"] = "Risultato",
     ["message.you"] = "Tu",
-    ["message.attachedFrom"] = "Allegato da {source}: {label}",
     ["message.notice"] = "Avviso",
 
     -- Inline chat
@@ -288,10 +287,6 @@ ns.Locales.itIT = {
     ["inline.bindNotChanged"] = "Il tasto non è stato cambiato in combattimento.",
     ["inline.boundTo"] = "Chat in linea: %s",
     ["inline.keyNotAssigned"] = "Impossibile assegnare questo tasto. Scegli un'altra combinazione.",
-    ["inline.reviewThis"] = "Analizza questo",
-    ["inline.attachmentDefaultLabel"] = "Dati",
-    ["inline.attachmentChip"] = "{source} · {label} · {size}",
-    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "Non disponibile",

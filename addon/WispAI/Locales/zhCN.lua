@@ -271,7 +271,6 @@ ns.Locales.zhCN = {
     ["message.toolInput"] = "输入",
     ["message.toolResult"] = "结果",
     ["message.you"] = "你",
-    ["message.attachedFrom"] = "来自 {source} 的附件：{label}",
     ["message.notice"] = "通知",
 
     -- Inline chat
@@ -288,10 +287,6 @@ ns.Locales.zhCN = {
     ["inline.bindNotChanged"] = "战斗中未更改按键绑定。",
     ["inline.boundTo"] = "快捷提问：%s",
     ["inline.keyNotAssigned"] = "无法绑定此按键。请换一个组合。",
-    ["inline.reviewThis"] = "帮我看看这个",
-    ["inline.attachmentDefaultLabel"] = "数据",
-    ["inline.attachmentChip"] = "{source} · {label} · {size}",
-    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "不可用",

@@ -68,14 +68,16 @@ local function validate(request)
     then
         return nil
     end
+    -- The caller writes everything the player reads; Wisp adds no text of its own.
     local source = request.source and plain(request.source) or ""
-    if source == "" then
+    local prompt = request.prompt and plain(request.prompt) or ""
+    if source == "" or prompt == "" then
         return nil
     end
     local clean = {
         source = source,
         title = request.title and plain(request.title) or "",
-        prompt = request.prompt and plain(request.prompt) or "",
+        prompt = prompt,
         link = request.link,
     }
     if attachment then
@@ -86,16 +88,12 @@ local function validate(request)
         then
             return nil
         end
+        local label = attachment.label and plain(attachment.label) or ""
         local text = data(attachment.text)
-        if text == "" then
+        if label == "" or text == "" then
             return nil
         end
-        local label = attachment.label and plain(attachment.label) or ""
-        clean.attachment = {
-            source = source,
-            label = label ~= "" and label or ns.L["inline.attachmentDefaultLabel"],
-            text = text,
-        }
+        clean.attachment = { source = source, label = label, text = text }
     end
     return clean
 end
@@ -109,10 +107,10 @@ end
 --- Opens the quick-question popup with `request` and focuses its input. Never sends.
 --- request = {
 ---   source = string,      -- required, caller addon name, ≤ 40 bytes
----   prompt = string?,     -- input text, ≤ 500 bytes (default: "Review this")
+---   prompt = string,      -- required, input text, ≤ 500 bytes
 ---   title = string?,      -- popup header, ≤ 60 bytes (default: source)
 ---   link = string?,       -- one game hyperlink, ≤ 255 bytes
----   attachment = { label = string? (≤ 60 bytes), text = string (≤ 4000 bytes) }?,
+---   attachment = { label = string (≤ 60 bytes), text = string (≤ 4000 bytes) }?,
 --- }
 --- Returns true, or false and "unavailable" | "invalid_request" | "busy" | "throttled".
 function ns.Api.Ask(request)

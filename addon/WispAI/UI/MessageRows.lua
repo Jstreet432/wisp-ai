@@ -31,10 +31,7 @@ local function attachmentNote(attachment)
         math.floor(MUTED[1] * 255),
         math.floor(MUTED[2] * 255),
         math.floor(MUTED[3] * 255),
-        ns.LocaleText("message.attachedFrom", {
-            source = plain(attachment.source),
-            label = plain(attachment.label),
-        })
+        plain(attachment.source) .. " · " .. plain(attachment.label)
     )
 end
 

@@ -230,11 +230,11 @@ local function refreshChip()
     if attachment then
         uiWidgets.SetText(
             chip.label,
-            ns.LocaleText("inline.attachmentChip", {
-                source = attachment.source,
-                label = attachment.label,
-                size = attachmentSize(attachment.text),
-            })
+            ("%s · %s · %s"):format(
+                attachment.source,
+                attachment.label,
+                attachmentSize(attachment.text)
+            )
         )
     end
 end
@@ -249,7 +249,7 @@ local function showChipPreview()
     for line in (attachment.text .. "\n"):gmatch("([^\n]*)\n") do
         count = count + 1
         if count > CHIP_PREVIEW_LINES then
-            GameTooltip:AddLine(L["inline.attachmentMore"], unpack(uiWidgets.MUTED))
+            GameTooltip:AddLine("…", unpack(uiWidgets.MUTED))
             break
         end
         -- Attachment text is raw data: escape pipes so it cannot draw markup.
@@ -500,7 +500,7 @@ function ns.Inline.OpenRequest(request)
     panel.source = request.source
     panel.reference = request.link
     panel.attachment = request.attachment
-    panel.prefill = request.prompt ~= "" and request.prompt or L["inline.reviewThis"]
+    panel.prefill = request.prompt
     entry:SetText(panel.prefill)
     local name = request.title ~= "" and request.title or request.source
     uiWidgets.SetText(title, L["inline.titleFor"]:format(name))

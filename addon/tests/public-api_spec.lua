@@ -86,19 +86,19 @@ it("Ask opens the popup prefilled, sends nothing, and sends the attachment on En
     assert(packets[#packets].type == "inline_say" and packets[#packets].attachment == nil)
 end)
 
-it("Ask defaults the prompt and title, and shows a link as the reference", function()
+it("Ask defaults the title to the source and shows a link as the reference", function()
     local env = helper.env()
     setfenv(1, env)
     setup(env)
 
     local link = "|cff1eff00|Hitem:100:0|h[Robe]|h|r"
-    assert(WispAI.Ask({ source = "MyBags", link = link }))
-    assert(UI_TEST.frames.WispAIInlineInput:GetText() == "Review this")
+    assert(WispAI.Ask({ source = "MyBags", prompt = "Is this an upgrade?", link = link }))
+    assert(UI_TEST.frames.WispAIInlineInput:GetText() == "Is this an upgrade?")
     assert(UI_TEST.frames.WispAIInline.reference == link)
     assert(not UI_TEST.frames.WispAIInlineAttachment:IsShown())
     ns.Inline.SendInline()
     local packet = sent("inline_say")
-    assert(packet.text == "Review this\n\n" .. link and packet.attachment == nil)
+    assert(packet.text == "Is this an upgrade?\n\n" .. link and packet.attachment == nil)
 end)
 
 it("Ask rejects invalid requests without opening anything", function()
@@ -113,21 +113,28 @@ it("Ask rejects invalid requests without opening anything", function()
         { source = "   " },
         { source = 7 },
         { source = string.rep("a", 41) },
+        { source = "A" },
+        { source = "A", prompt = "  " },
         { source = "A", prompt = string.rep("a", 501) },
-        { source = "A", title = string.rep("a", 61) },
-        { source = "A", link = "plain text" },
-        { source = "A", link = "|Hitem:1|h[A]|h and more" },
-        { source = "A", attachment = "text" },
-        { source = "A", attachment = { text = "" } },
-        { source = "A", attachment = { text = string.rep("a", 4001) } },
-        { source = "A", attachment = { label = string.rep("a", 61), text = "x" } },
+        { source = "A", prompt = "P", title = string.rep("a", 61) },
+        { source = "A", prompt = "P", link = "plain text" },
+        { source = "A", prompt = "P", link = "|Hitem:1|h[A]|h and more" },
+        { source = "A", prompt = "P", attachment = "text" },
+        { source = "A", prompt = "P", attachment = { text = "x" } },
+        { source = "A", prompt = "P", attachment = { label = "L", text = "" } },
+        { source = "A", prompt = "P", attachment = { label = "L", text = string.rep("a", 4001) } },
+        { source = "A", prompt = "P", attachment = { label = string.rep("a", 61), text = "x" } },
     }
     for index, request in ipairs(invalid) do
         local ok, reason = WispAI.Ask(request)
         assert(ok == false and reason == "invalid_request", "request " .. index)
     end
     assert(not UI_TEST.frames.WispAIInline:IsShown())
-    assert(WispAI.Ask({ source = "A", attachment = { text = string.rep("a", 4000) } }))
+    assert(WispAI.Ask({
+        source = "A",
+        prompt = "P",
+        attachment = { label = "L", text = string.rep("a", 4000) },
+    }))
 end)
 
 it("Ask strips WoW markup from what it displays", function()
@@ -156,11 +163,11 @@ it("Ask reports unavailable, busy and throttled without touching the popup", fun
     setup(env)
 
     ns.connected = false
-    assert(select(2, WispAI.Ask({ source = "A" })) == "unavailable")
+    assert(select(2, WispAI.Ask({ source = "A", prompt = "P" })) == "unavailable")
     assert(WispAI.IsAvailable() == false)
     ns.connected = true
     ns.Transport.needsDesktopSetup = true
-    assert(select(2, WispAI.Ask({ source = "A" })) == "unavailable")
+    assert(select(2, WispAI.Ask({ source = "A", prompt = "P" })) == "unavailable")
     ns.Transport.needsDesktopSetup = false
 
     assert(WispAI.Ask({ source = "A", prompt = "First" }))
@@ -171,12 +178,15 @@ it("Ask reports unavailable, busy and throttled without touching the popup", fun
     local input = UI_TEST.frames.WispAIInlineInput
     input:SetText("My own question")
     UI_TEST.now = UI_TEST.now + 1
-    assert(select(2, WispAI.Ask({ source = "C" })) == "busy")
+    assert(select(2, WispAI.Ask({ source = "C", prompt = "P" })) == "busy")
     assert(input:GetText() == "My own question", "the player's text is never overwritten")
 
     ns.Inline.SendInline()
     UI_TEST.now = UI_TEST.now + 1
-    assert(select(2, WispAI.Ask({ source = "C" })) == "busy", "a question is being answered")
+    assert(
+        select(2, WispAI.Ask({ source = "C", prompt = "P" })) == "busy",
+        "a question is being answered"
+    )
 end)
 
 it("a hovered reference replaces an Ask session and its attachment", function()
@@ -184,7 +194,7 @@ it("a hovered reference replaces an Ask session and its attachment", function()
     setfenv(1, env)
     setup(env)
 
-    assert(WispAI.Ask({ source = "MyMeter", attachment = FIGHT }))
+    assert(WispAI.Ask({ source = "MyMeter", prompt = "Review", attachment = FIGHT }))
     GameTooltip.GetItem = function()
         return "Robe", "|cff00ff00|Hitem:100:0|h[Robe]|h|r"
     end
@@ -202,14 +212,14 @@ it("a user message names the addon its attachment came from", function()
     setfenv(1, env)
     setup(env)
 
-    assert(WispAI.Ask({ source = "MyMeter", attachment = FIGHT }))
+    assert(WispAI.Ask({ source = "MyMeter", prompt = "Review my fight", attachment = FIGHT }))
     ns.Inline.SendInline()
     local found
     for _, row in ipairs(UI_TEST.widgets) do
         local text = type(row.text) == "table" and row.text:GetText()
-        if type(text) == "string" and text:find("Review this", 1, true) then
+        if type(text) == "string" and text:find("Review my fight", 1, true) then
             found = text
         end
     end
-    assert(found and found:find("Attached from MyMeter: Last fight", 1, true), found)
+    assert(found and found:find("MyMeter · Last fight", 1, true), found)
 end)

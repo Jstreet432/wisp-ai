@@ -271,7 +271,6 @@ ns.Locales.koKR = {
     ["message.toolInput"] = "입력",
     ["message.toolResult"] = "결과",
     ["message.you"] = "나",
-    ["message.attachedFrom"] = "{source}에서 첨부: {label}",
     ["message.notice"] = "알림",
 
     -- Inline chat
@@ -288,10 +287,6 @@ ns.Locales.koKR = {
     ["inline.bindNotChanged"] = "전투 중이라 단축키를 바꾸지 않았습니다.",
     ["inline.boundTo"] = "인라인 채팅: %s",
     ["inline.keyNotAssigned"] = "이 키는 지정할 수 없습니다. 다른 조합을 고르세요.",
-    ["inline.reviewThis"] = "이것을 검토해 줘",
-    ["inline.attachmentDefaultLabel"] = "데이터",
-    ["inline.attachmentChip"] = "{source} · {label} · {size}",
-    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "사용 불가",

@@ -271,7 +271,6 @@ ns.Locales.zhTW = {
     ["message.toolInput"] = "輸入",
     ["message.toolResult"] = "結果",
     ["message.you"] = "你",
-    ["message.attachedFrom"] = "來自 {source} 的附件：{label}",
     ["message.notice"] = "通知",
 
     -- Inline chat
@@ -288,10 +287,6 @@ ns.Locales.zhTW = {
     ["inline.bindNotChanged"] = "戰鬥中未變更按鍵設定。",
     ["inline.boundTo"] = "快速提問：%s",
     ["inline.keyNotAssigned"] = "無法設定此按鍵。請換一個組合。",
-    ["inline.reviewThis"] = "幫我看看這個",
-    ["inline.attachmentDefaultLabel"] = "資料",
-    ["inline.attachmentChip"] = "{source} · {label} · {size}",
-    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "無法使用",
