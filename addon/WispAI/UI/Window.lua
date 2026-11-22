@@ -9,6 +9,8 @@ local rendering = false
 -- Minimized, the window is its title bar alone: the bar's 36 units and the
 -- frame's top and bottom hairlines, so restoring keeps the bar where it was.
 local MINI_WIDTH, MINI_HEIGHT = 240, 38
+-- Item and macro data, and quest log changes, are redrawn in batches.
+local ITEM_BATCH_SECONDS, QUEST_BATCH_SECONDS = 0.2, 0.4
 
 --- Window control: diagonal arrows pointing in to minimize the window to its
 --- bar, and out to restore it, as floating chat panels do.
@@ -332,16 +334,37 @@ function ns.UI.BuildUI()
     end)
     ns.UI.Routines.Build(frame, chatPanel)
     settings = ns.UI.SettingsPanel.Build(frame, chatPanel)
+    -- Opening bags or the quest log fires these events in bursts. Each burst
+    -- waits for one timer and redraws the transcript once, not once per event.
+    local itemsPending, questsPending = false, false
+    local function redrawReferences()
+        ns.itemRevision = ns.itemRevision + 1
+        ns.UI.Refresh()
+    end
+    local function flushItems()
+        itemsPending = false
+        redrawReferences()
+    end
+    local function flushQuests()
+        questsPending = false
+        if refreshReferences() then
+            redrawReferences()
+        end
+    end
     local itemEvents = CreateFrame("Frame")
     itemEvents:RegisterEvent("GET_ITEM_INFO_RECEIVED")
     itemEvents:RegisterEvent("QUEST_LOG_UPDATE")
     itemEvents:RegisterEvent("UPDATE_MACROS")
     itemEvents:SetScript("OnEvent", function(_, event)
-        if event == "QUEST_LOG_UPDATE" and not refreshReferences() then
-            return
+        if event == "QUEST_LOG_UPDATE" then
+            if not questsPending then
+                questsPending = true
+                C_Timer.After(QUEST_BATCH_SECONDS, flushQuests)
+            end
+        elseif not itemsPending then
+            itemsPending = true
+            C_Timer.After(ITEM_BATCH_SECONDS, flushItems)
         end
-        ns.itemRevision = ns.itemRevision + 1
-        ns.UI.Refresh()
     end)
     frame:EnableKeyboard(true)
     frame:SetPropagateKeyboardInput(true)
