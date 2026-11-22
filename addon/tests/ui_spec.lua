@@ -1163,7 +1163,7 @@ it(
     end
 )
 
-it("never shows a reply's raw Markdown on the first render after switching chats", function()
+it("shows a finished reply formatted on the first render after switching chats", function()
     local env = helper.env()
     setfenv(1, env)
     setup(env)
@@ -1215,22 +1215,15 @@ it("never shows a reply's raw Markdown on the first render after switching chats
     end
 
     ns.Chat.Select("old")
+    -- A finished reply is settled during the render, so the very first frame
+    -- already shows it formatted: no raw Markdown and no empty gap.
     local _, _, pending = ns.Markdown.Cache.Get(source)
-    assert(pending, "the reply's syntax is still being processed after the switch")
+    assert(not pending, "the reply's syntax was settled during the switch")
     local first = shownText()
     assert(first:find("What should I buy?", 1, true), "the transcript rendered the chat")
+    assert(first:find("Buy the shoulders first", 1, true), "the formatted reply appears at once")
+    assert(first:find("[Robe]", 1, true), "item references are rendered as links")
     assert(not first:find("**", 1, true), "no literal bold markers")
     assert(not first:find("|---|", 1, true), "no literal table separators")
     assert(not first:find("[[ref:", 1, true), "no literal reference markup")
-
-    for _ = 1, 2000 do
-        local _, left = ns.Markdown.Cache.Step()
-        if left == 0 then
-            break
-        end
-    end
-    local settled = shownText()
-    assert(settled:find("Buy the shoulders first", 1, true), "the formatted reply appears")
-    assert(settled:find("[Robe]", 1, true), "item references are rendered as links")
-    assert(not settled:find("**", 1, true) and not settled:find("|---|", 1, true))
 end)

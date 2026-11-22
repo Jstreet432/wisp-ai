@@ -78,6 +78,8 @@ end)
 it("cancels obsolete part sources without cancelling unchanged pending parts", function()
     local _, ns = setup()
     local state, original = ns.Markdown.ReplyView.New(), reply("canonical source remains unchanged")
+    -- Parts change while syntax is pending only while a reply streams.
+    original.streaming = true
     original.parts = {
         { type = "text", text = tableSource },
         { type = "text", text = "first" .. longSuffix },
@@ -106,6 +108,7 @@ end)
 it("retains compatible prefixes and replaces their presentation once syntax completes", function()
     local _, ns = setup()
     local state, original = ns.Markdown.ReplyView.New(), reply("same canonical source")
+    original.streaming = true
     original.parts = { { type = "text", text = tableSource } }
     local stable, stableKey = ns.Markdown.ReplyView.Update(state, "chat", original)
     original.parts[1].text = tableSource .. longSuffix
@@ -196,6 +199,7 @@ it(
     function()
         local _, ns = setup()
         local state, original = ns.Markdown.ReplyView.New(), reply("A|B\n---|---\n[[ref:robe]]|y")
+        original.streaming = true
         original.references = { robe = { kind = "item", id = 100, label = "Old robe" } }
         original.ui = { { id = "action", kind = "button", label = "Old action" } }
         local stable = ns.Markdown.ReplyView.Update(state, "chat", original)
