@@ -191,7 +191,13 @@ local function project(message)
             -- A finished reply, such as one in a chat the player just opened, is
             -- parsed now (within a per-frame budget) so it appears formatted.
             if loading and not message.streaming and ns.Markdown.Cache.Settle then
-                tree, err, loading = ns.Markdown.Cache.Settle(part.text, false)
+                local settledTree, settledErr, stillLoading =
+                    ns.Markdown.Cache.Settle(part.text, false)
+                -- No answer means nothing was queued (a busy cache deferred
+                -- admission): keep `Get`'s pending state so the row retries.
+                if stillLoading ~= nil then
+                    tree, err, loading = settledTree, settledErr, stillLoading
+                end
             end
             pending = pending or loading
             if tree then

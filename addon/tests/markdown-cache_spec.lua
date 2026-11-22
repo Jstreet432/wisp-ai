@@ -113,8 +113,10 @@ it("settles a pending document now when its reply is already finished", function
     assert.equal(0, cache.pendingCount)
     assert.equal(1, cache.revision)
     assert.equal("finished", cache:Get("finished").source, "the settled syntax is cached")
-    local again = cache:Settle("unknown")
+    local again, againErr, againPending = cache:Settle("unknown")
     assert.is_nil(again, "only sources already requested are settled")
+    assert.is_nil(againErr)
+    assert.is_nil(againPending, "an unknown source reports no state to override")
     assert.equal(4, #state.resumed)
 end)
 

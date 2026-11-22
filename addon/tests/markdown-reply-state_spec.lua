@@ -265,3 +265,26 @@ it("invalidates native inline waits independently without recompiling the docume
     local _, settledKey = ns.Markdown.ReplyView.Update(state, "chat", original)
     assert.equal(completedKey, settledKey)
 end)
+
+it("keeps a finished reply pending and hidden when the cache defers admission", function()
+    local _, ns = setup()
+    local state, original = ns.Markdown.ReplyView.New(), reply(tableSource .. longSuffix)
+    local get, busy = ns.Markdown.Cache.Get, true
+    ns.Markdown.Cache.Get = function(source, inline, urgent)
+        if busy and source == original.text then
+            return nil, { code = "busy" }, true
+        end
+        return get(source, inline, urgent)
+    end
+    local waiting = ns.Markdown.ReplyView.Update(state, "chat", original)
+    assert.is_true(waiting._markdownPending, "a deferred reply still waits for syntax")
+    assert.is_true(waiting.parts[1].placeholder, "its raw preview stays hidden")
+    -- Capacity frees up when other queued syntax completes, which bumps the
+    -- cache revision and makes the pending row project again.
+    busy = false
+    ns.Markdown.Cache.Get("another queued reply" .. longSuffix)
+    drain(ns)
+    local view = ns.Markdown.ReplyView.Update(state, "chat", original)
+    assert.is_false(view._markdownPending, "the retry admits and settles it")
+    assert.equal(1, #view.ui)
+end)

@@ -281,10 +281,12 @@ end
 
 --- Finishes parsing a pending source now, within a budget shared by every call
 --- in the same frame. Returns like `Get`: document, error, still pending.
+--- Returns nothing when the source has no entry (for example `Get` deferred
+--- admission as busy), so the caller keeps the state `Get` reported.
 function Cache:Settle(source, inline)
     local entry = type(source) == "string" and self.entries[inline and 2 or 1][source]
     if not entry then
-        return nil, nil, false
+        return
     end
     if not entry.pending then
         return entry.document, entry.error, false
