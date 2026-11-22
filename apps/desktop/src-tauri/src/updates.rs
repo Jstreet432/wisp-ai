@@ -293,6 +293,9 @@ pub async fn install_update(
     if automatic {
         super::update_trace::append(&host.data, "automatic-install");
     }
+    // Wait for a background download of this installer instead of fetching it
+    // twice, and keep a new one from starting while this install downloads.
+    let downloading = updates.downloading.lock().await;
     let bytes = match updates.downloaded_bytes(&update.version) {
         Some(bytes) => bytes,
         None => {
@@ -313,6 +316,7 @@ pub async fn install_update(
                 .map_err(|e| e.to_string())?
         }
     };
+    drop(downloading);
     super::update_trace::append(&host.data, "download-verified");
     // Only a manual install waits for a reply; an automatic one gives up instead.
     if !automatic {
