@@ -16,12 +16,13 @@ local function refreshReferences()
     for index = 1, C_QuestLog.GetNumQuestLogEntries() do
         local info = C_QuestLog.GetInfo(index)
         if info and not info.isHeader and info.questID and info.title then
-            local old = ns.db.questReferences[tostring(info.questID)]
+            local key = tostring(info.questID)
+            local old = ns.db.questReferences[key]
             if not old or old.title ~= info.title or old.level ~= info.level then
                 changed = true
+                ns.db.questReferences[key] =
+                    { id = info.questID, title = info.title, level = info.level }
             end
-            ns.db.questReferences[tostring(info.questID)] =
-                { id = info.questID, title = info.title, level = info.level }
         end
     end
     referenceQuests = ns.db.questReferences
