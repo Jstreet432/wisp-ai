@@ -347,7 +347,7 @@ it("reveals streamed prose without cutting UTF-8 or remeasuring the row", functi
     assert.is_nil(row.scripts.OnUpdate)
 end)
 
-it("holds the first glyph until the first long reply is formatted", function()
+it("hides the pending preview until the first long reply is formatted", function()
     local env, ns = setup()
     local original =
         message("Primero, revisá la quest.\n\n" .. string.rep("- **Opción** con detalles.\n", 26))
@@ -355,7 +355,7 @@ it("holds the first glyph until the first long reply is formatted", function()
     local chat = { id = "chat", status = "done", messages = { original } }
     local row = ns.UI.MakeMessageRow(env.CreateFrame("Frame"))
     ns.UI.RenderMessageRow(row, chat, original, 300, true, true)
-    assert.equal("P", row.text:GetText())
+    assert.is_false(row.text:IsShown())
     assert.is_nil(row.scripts.OnUpdate)
     settled(ns, original)
     ns.UI.RenderMessageRow(row, chat, original, 300, true)

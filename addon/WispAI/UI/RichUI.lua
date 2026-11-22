@@ -696,7 +696,8 @@ function ns.UI.RenderRichUI(host, chat, message, width, collectWriting, animateP
                     f:SetPoint("TOPLEFT", left, -y)
                     f:SetWidth(math.max(1, width - left))
                     uiWidgets.SetText(f, part._markdown and part.text or rendered(part.text))
-                    f:Show()
+                    -- Pending syntax: reserve the space without showing raw Markdown.
+                    f:SetShown(not part.placeholder)
                     y = y + f:GetStringHeight() + 8
                     if writingUnits then
                         unit = { fonts = { f } }

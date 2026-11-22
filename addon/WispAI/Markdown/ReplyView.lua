@@ -193,7 +193,13 @@ local function project(message)
                 document(tree)
             else
                 errorCode = err and err.code or errorCode
+                local count = #parts
                 prose(ns.Markdown.InlineRenderer.Preview(part.text))
+                -- While syntax is queued the literal preview only reserves the
+                -- reply's space; showing it would flash raw Markdown.
+                if loading and #parts > count then
+                    parts[#parts].placeholder = true
+                end
             end
         end
     end
