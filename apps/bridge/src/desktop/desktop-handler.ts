@@ -7,7 +7,7 @@ import {
   type DesktopRoutes,
   type DesktopRouteReply,
 } from '@wisp/protocol/desktop-routes';
-import type { Status } from '@wisp/protocol/desktop';
+import { stopRequestSchema, type Status } from '@wisp/protocol/desktop';
 import type { McpManager } from '../integrations/mcp/mcp-manager.ts';
 import type { ModelConnections } from '../models/model-connections.ts';
 import type { WebSearch } from '../integrations/search/web-search.ts';
@@ -29,8 +29,6 @@ export const wowTransportInput = z.discriminatedUnion('action', [
   z.object({ action: z.literal('pause') }),
   z.object({ action: z.literal('resume'), wow: z.string().min(1).optional() }),
 ]);
-// Called by the Rust host before it stops the bridge; not part of the webview contract.
-const stopInput = z.object({ unlessGameConnected: z.boolean().optional() });
 interface DesktopDependencies {
   auth: ChatGPTAuth;
   connections: ModelConnections;
@@ -202,7 +200,7 @@ export function createDesktopApp(deps: DesktopDependencies) {
       await deps.setWowTransport(c.req.valid('json'));
       return c.json(ok);
     })
-    .post('/stop', json(stopInput), (c) => {
+    .post('/stop', json(stopRequestSchema), (c) => {
       if (deps.getChats().some(isWorking)) {
         throw Error('Wait for the active turn before stopping Wisp');
       }
