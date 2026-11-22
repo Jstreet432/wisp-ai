@@ -14,6 +14,8 @@ import Toggle from '../../ui/Toggle';
 export const AUTO_INSTALL_IDLE_MS = 10 * 60 * 1000;
 /** The native refusal when a reply started just before an automatic install. */
 const AUTOMATIC_BUSY = 'Wisp is busy; the update will install later.';
+/** How often a scheduled update checks whether WoW is still running. */
+export const GAME_CHECK_MS = 30 * 1000;
 
 type Release = { version: string; notes: string | null };
 const updateChannels = [
@@ -142,6 +144,8 @@ export default function Updates({
     autoFailed,
   } = useStore(updates);
   const [autoInstallError, setAutoInstallError] = useState('');
+  /** Whether WoW is running; null until checked. Only a closed game counts as idle. */
+  const [gameRunning, setGameRunning] = useState<boolean | null>(null);
   const channel = savedChannel ?? 'stable';
   const checking = operation?.kind === 'checking';
   const installing = operation?.kind === 'installing';
@@ -275,12 +279,34 @@ export default function Updates({
     };
   }, [autoInstall, available, getState, lastChecked, prepared, setState]);
 
-  // Install once Wisp has stayed idle for the whole window; any activity restarts it.
+  // The bridge keeps reporting the game as connected after WoW exits, so ask
+  // Windows for the process while an update waits to install.
   useEffect(() => {
-    if (!scheduled || !idle || locked || operation) return;
+    if (!native || !scheduled) return;
+    let current = true;
+    const look = () =>
+      void desktop<boolean>('game_running')
+        .then((running) => {
+          if (current) setGameRunning(running);
+        })
+        .catch(() => {
+          if (current) setGameRunning(null);
+        });
+    look();
+    const timer = setInterval(look, GAME_CHECK_MS);
+    return () => {
+      current = false;
+      clearInterval(timer);
+    };
+  }, [scheduled]);
+
+  // Install once WoW has stayed closed and Wisp idle for the whole window; any
+  // activity or a game launch restarts it.
+  useEffect(() => {
+    if (!scheduled || !idle || gameRunning !== false || locked || operation) return;
     const timer = setTimeout(() => void installAutomatically(), AUTO_INSTALL_IDLE_MS);
     return () => clearTimeout(timer);
-  }, [idle, installAutomatically, locked, operation, scheduled]);
+  }, [gameRunning, idle, installAutomatically, locked, operation, scheduled]);
 
   useEffect(() => {
     if (!native) return;

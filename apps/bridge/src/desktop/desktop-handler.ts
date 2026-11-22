@@ -7,7 +7,7 @@ import {
   type DesktopRoutes,
   type DesktopRouteReply,
 } from '@wisp/protocol/desktop-routes';
-import { stopRequestSchema, type Status } from '@wisp/protocol/desktop';
+import type { Status } from '@wisp/protocol/desktop';
 import type { McpManager } from '../integrations/mcp/mcp-manager.ts';
 import type { ModelConnections } from '../models/model-connections.ts';
 import type { WebSearch } from '../integrations/search/web-search.ts';
@@ -200,13 +200,9 @@ export function createDesktopApp(deps: DesktopDependencies) {
       await deps.setWowTransport(c.req.valid('json'));
       return c.json(ok);
     })
-    .post('/stop', json(stopRequestSchema), (c) => {
+    .post('/stop', (c) => {
       if (deps.getChats().some(isWorking)) {
         throw Error('Wait for the active turn before stopping Wisp');
-      }
-      // Automatic app updates must never stop the bridge under a running game.
-      if (c.req.valid('json').unlessGameConnected && deps.getStatus().gameConnected) {
-        throw Error('Wait for WoW to disconnect before stopping Wisp');
       }
       deps.requestStop();
       return c.json(ok);

@@ -125,26 +125,6 @@ test('the desktop reports the app update the game announces', async () => {
   expect((await post('/app-update', { version: '' })).status).toBe(400);
   expect(deps.setAppUpdate).toHaveBeenCalledTimes(2);
 });
-test('an automatic stop is refused while WoW is connected; a plain stop is not', async () => {
-  const { post, deps } = setup();
-  const requestStop = vi.fn();
-  Object.assign(deps, { requestStop });
-  status.gameConnected = true;
-  try {
-    const refused = await post('/stop', { unlessGameConnected: true });
-    expect(refused.ok).toBe(false);
-    expect(JSON.stringify(await refused.json())).toContain(
-      'Wait for WoW to disconnect before stopping Wisp',
-    );
-    expect(requestStop).not.toHaveBeenCalled();
-    expect((await post('/stop', {})).status).toBe(200);
-    expect(requestStop).toHaveBeenCalledOnce();
-  } finally {
-    status.gameConnected = false;
-  }
-  expect((await post('/stop', { unlessGameConnected: true })).status).toBe(200);
-  expect(requestStop).toHaveBeenCalledTimes(2);
-});
 test('unknown routes and methods are refused', async () => {
   const { app } = setup();
   for (const response of [

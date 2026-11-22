@@ -68,15 +68,8 @@ export const statusSchema = z.object({
   /** Newer app version the desktop reported to this bridge; the addon announces it. */
   appUpdate: z.string().nullable().default(null),
 });
-/**
- * Body of the bridge's `/stop`, sent by the Rust host before it stops the
- * bridge (not part of the webview contract). `unlessGameConnected` makes the
- * stop refuse while WoW is connected, as automatic updates require.
- */
-export const stopRequestSchema = z.object({ unlessGameConnected: z.boolean().optional() });
 export type DesktopInfo = z.infer<typeof desktopInfoSchema>;
 export type Model = z.infer<typeof modelSchema>;
 export type Mcp = z.infer<typeof mcpSchema>;
 export type Panel = z.infer<typeof panelSchema>;
 export type Status = z.infer<typeof statusSchema>;
-export type StopRequest = z.infer<typeof stopRequestSchema>;

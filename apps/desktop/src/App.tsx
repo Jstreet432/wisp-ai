@@ -57,7 +57,8 @@ function DesktopShell() {
   const { busy, clearFeedback, failed, feedback, loading } = app;
   const readiness = useDesktop(desktopReadiness);
   // An automatic update restarts the bridge, so it waits until nothing uses it.
-  const idle = useDesktop((state) => !state.status?.gameConnected && !desktopActive(state));
+  // Whether WoW is open comes from the process list (see Updates), not the bridge.
+  const idle = useDesktop((state) => !desktopActive(state));
   useAppShortcuts(!loading && !app.onboarding);
   useNativeNotifications(busy ? '' : feedback, failed, readiness);
 
