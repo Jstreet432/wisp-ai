@@ -804,6 +804,8 @@ fn main() {
             import_legacy,
             updates::check_update,
             updates::install_update,
+            updates::download_update,
+            updates::update_auto_install,
             native_shell::notify,
             native_shell::autostart_enabled,
             native_shell::set_autostart
@@ -872,7 +874,10 @@ fn main() {
                 .build(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 native_shell::disable_browser_shortcuts(&window);
-                if !native_shell::started_minimized() {
+                // Consume the marker on every launch so it never outlives one relaunch.
+                let relaunch_minimized =
+                    updates::take_relaunch_minimized(&app.state::<Host>().data);
+                if !native_shell::started_minimized() && !relaunch_minimized {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
