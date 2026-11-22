@@ -164,6 +164,30 @@ SlashCmdList.WISPAI = function(message)
         )
         return
     end
+    -- Times full window redraws of the current chat, to see how redraw cost
+    -- grows with chat length on a real client.
+    if message == "perf" then
+        if not debugprofilestop or not ns.UI.Refresh then
+            return
+        end
+        local times = {}
+        for index = 1, 5 do
+            local started = debugprofilestop()
+            ns.UI.Refresh()
+            times[index] = debugprofilestop() - started
+        end
+        table.sort(times)
+        local chat = ns.Chat.Current and ns.Chat.Current()
+        ns.Core.Log(
+            string.format(
+                "Redraw of %d messages: median %.1f ms, slowest %.1f ms",
+                chat and chat.messages and #chat.messages or 0,
+                times[3],
+                times[5]
+            )
+        )
+        return
+    end
     if message == "reconnect" then
         ns.Transport.Send({ type = "hello", chat = ns.active })
         return

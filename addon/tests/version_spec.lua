@@ -66,6 +66,48 @@ it("diag compares the loaded addon with the bundled addon version", function()
     assert(logs[1]:find("desktop/bridge unknown", 1, true))
 end)
 
+it("perf times five redraws of the current chat", function()
+    local env = helper.env()
+    setfenv(1, env)
+    do
+        logs = {}
+        SlashCmdList = {}
+        ns = helper.namespace({ slot = 1 })
+        function time()
+            return 1
+        end
+        function CreateFrame()
+            return { RegisterEvent = function() end, SetScript = function() end }
+        end
+        DEFAULT_CHAT_FRAME = {
+            AddMessage = function(_, text)
+                logs[#logs + 1] = text
+            end,
+        }
+        C_AddOns = {
+            GetAddOnMetadata = function()
+                return "1.0.0"
+            end,
+        }
+    end
+    helper.addon("Core.lua", env)
+    local now, redraws = 0, 0
+    function debugprofilestop()
+        return now
+    end
+    function ns.UI.Refresh()
+        redraws = redraws + 1
+        now = now + redraws * 2
+    end
+    function ns.Chat.Current()
+        return { messages = { {}, {}, {} } }
+    end
+
+    SlashCmdList.WISPAI("perf")
+    assert(redraws == 5)
+    assert(logs[1]:find("Redraw of 3 messages: median 6.0 ms, slowest 10.0 ms", 1, true), logs[1])
+end)
+
 it("prints the /reload hint once when Desktop installed a newer addon", function()
     local env = helper.env()
     setfenv(1, env)
