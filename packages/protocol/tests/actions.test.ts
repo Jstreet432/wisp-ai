@@ -60,3 +60,21 @@ test('Polestar guide actions require each goal type’s fields and bound the gui
   assert.equal(guide([{ goals: [goal] }], { id: 'g1700000000' }).success, true);
   assert.equal(guide([{ goals: [goal] }], { id: '../Bad' }).success, false);
 });
+
+test('Polestar guides fit the agent action request body', () => {
+  const note = { type: 'note', text: 'x'.repeat(200) };
+  const guide = (steps: number) => ({
+    kind: 'polestar_guide',
+    args: { title: 'Large', steps: Array(steps).fill({ goals: Array(8).fill(note) }) },
+  });
+  const largest = actionSchema.safeParse(guide(30));
+  assert.equal(largest.success, false);
+  assert.match(String(largest.error), /bytes; keep it under 24576/);
+  // The biggest guide the schema accepts still fits the 32 KiB /action body.
+  let steps = 30;
+  while (!actionSchema.safeParse(guide(steps)).success) {
+    steps -= 1;
+  }
+  const body = JSON.stringify({ eveSession: 'e'.repeat(64), action: guide(steps) });
+  assert.ok(Buffer.byteLength(body) < 32768, `${steps} steps: ${Buffer.byteLength(body)} bytes`);
+});

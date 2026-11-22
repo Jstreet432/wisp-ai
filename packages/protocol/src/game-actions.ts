@@ -116,27 +116,40 @@ export const guideGoal = z
       (goal.x === undefined) === (goal.y === undefined),
     'Give mapId, x and y together',
   );
-export const guideInput = z.strictObject({
-  id: z
-    .string()
-    .regex(/^[a-z0-9][a-z0-9-]{0,31}$/)
-    .optional()
-    .describe(
-      'The id of an earlier Wisp guide to replace its steps in place; omit for a new guide.',
-    ),
-  title: guideText(80),
-  steps: z
-    .array(
-      z.strictObject({
-        title: guideText(80).optional(),
-        note: guideText(300).optional(),
-        goals: z.array(guideGoal).min(1).max(8),
-      }),
-    )
-    .min(1)
-    .max(30),
-  open: z.boolean().default(true).describe('Show the guide in Polestar’s active tab.'),
-});
+// The agent's /action request body is capped at 32 KiB and the guide then
+// crosses the slow addon downlink, so a guide stays well under that in total.
+export const GUIDE_MAX_BYTES = 24 * 1024;
+export const guideInput = z
+  .strictObject({
+    id: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]{0,31}$/)
+      .optional()
+      .describe(
+        'The id of an earlier Wisp guide to replace its steps in place; omit for a new guide.',
+      ),
+    title: guideText(80),
+    steps: z
+      .array(
+        z.strictObject({
+          title: guideText(80).optional(),
+          note: guideText(300).optional(),
+          goals: z.array(guideGoal).min(1).max(8),
+        }),
+      )
+      .min(1)
+      .max(30),
+    open: z.boolean().default(true).describe('Show the guide in Polestar’s active tab.'),
+  })
+  .superRefine((guide, ctx) => {
+    const bytes = Buffer.byteLength(JSON.stringify(guide), 'utf8');
+    if (bytes > GUIDE_MAX_BYTES) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `The guide is ${bytes} bytes; keep it under ${GUIDE_MAX_BYTES} by shortening text or splitting it into smaller guides`,
+      });
+    }
+  });
 export const actionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('update_settings'), args: settingsUpdate }),
   z.object({ kind: z.literal('undo_settings'), args: settingsUndo }),
