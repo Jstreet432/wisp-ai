@@ -226,7 +226,9 @@ export default function Updates({
     const { release, operation } = getState();
     if (!release || operation) return;
     setState({
-      operation: { kind: 'installing', progress: { phase: 'waiting' } },
+      // The installer is already downloaded and nothing is running, so the next
+      // step is the Windows updater: never "waiting for the active reply".
+      operation: { kind: 'installing', progress: { phase: 'installing' } },
       error: '',
     });
     onBusy('Updating Wisp');
@@ -258,6 +260,7 @@ export default function Updates({
   }
 
   // Download a found update in the background so the idle install is quick.
+  // Each successful check (`lastChecked`) retries a download that failed.
   useEffect(() => {
     if (!native || !autoInstall || !available || prepared === available) return;
     let current = true;
@@ -265,12 +268,12 @@ export default function Updates({
       .then((version) => {
         if (current && version === getState().release?.version) setState({ prepared: version });
       })
-      // A failed background download leaves the manual install, which downloads again.
+      // Until the next check retries, the manual install still downloads by itself.
       .catch(() => {});
     return () => {
       current = false;
     };
-  }, [autoInstall, available, getState, prepared, setState]);
+  }, [autoInstall, available, getState, lastChecked, prepared, setState]);
 
   // Install once Wisp has stayed idle for the whole window; any activity restarts it.
   useEffect(() => {

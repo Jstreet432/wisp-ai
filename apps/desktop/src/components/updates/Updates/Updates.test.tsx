@@ -190,6 +190,40 @@ test('a downloaded update installs after Wisp stays idle, and activity restarts 
   expect(options.onBusy).toHaveBeenCalledWith('Updating Wisp');
 });
 
+test('an automatic install says it is opening the updater, not waiting for a reply', async () => {
+  vi.useFakeTimers();
+  autoInstallOn();
+  render(<Updates {...props()} idle />);
+  await act(() => vi.advanceTimersByTimeAsync(AUTO_INSTALL_IDLE_MS));
+  expect(
+    screen.getByText('Opening the Windows updater. Wisp will close and reopen automatically…'),
+  ).toBeTruthy();
+  expect(screen.queryByText('Waiting for the active reply to finish…')).toBeNull();
+});
+
+test('a failed background download is retried by the next check', async () => {
+  vi.useFakeTimers();
+  autoInstallOn();
+  const base = vi.mocked(desktop).getMockImplementation()!;
+  let failures = 1;
+  vi.mocked(desktop).mockImplementation(async (command, args) => {
+    if (command === 'download_update' && failures-- > 0) throw Error('offline');
+    return base(command, args);
+  });
+  render(<Updates {...props()} idle />);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const downloads = () =>
+    vi.mocked(desktop).mock.calls.filter(([command]) => command === 'download_update');
+  expect(downloads()).toHaveLength(1);
+  await act(() => vi.advanceTimersByTimeAsync(AUTO_INSTALL_IDLE_MS));
+  expect(installCalls()).toHaveLength(0);
+
+  await act(() => vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000));
+  expect(downloads()).toHaveLength(2);
+  await act(() => vi.advanceTimersByTimeAsync(AUTO_INSTALL_IDLE_MS));
+  expect(installCalls()).toHaveLength(1);
+});
+
 test('an update never installs by itself while WoW or a reply keeps Wisp busy', async () => {
   vi.useFakeTimers();
   autoInstallOn();

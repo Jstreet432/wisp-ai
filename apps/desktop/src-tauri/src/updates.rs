@@ -1,5 +1,8 @@
+use super::native_shell::AfterUpdate;
 use super::Host;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
@@ -37,9 +40,9 @@ fn read_channel(data: &std::path::Path) -> Result<String, String> {
     }
 }
 const AUTO_INSTALL_FILE: &str = "update-auto-install.txt";
-/// Left by an automatic install that ran while Wisp was in the tray, so the
-/// relaunched app goes back to the tray instead of opening on screen.
-const RELAUNCH_MINIMIZED_FILE: &str = "update-relaunch-minimized";
+/// The verified installer of a background download. One at a time; a new
+/// download, a channel change or the next launch replaces or removes it.
+const INSTALLER_FILE: &str = "runtime/update-installer.bin";
 const BUSY_TURN: &str = "Wait for the active turn before stopping Wisp";
 const BUSY_GAME: &str = "Wait for WoW to disconnect before stopping Wisp";
 /// Returned when an automatic install finds a reply running or WoW connected; the
@@ -74,9 +77,43 @@ pub fn update_auto_install(
     read_auto_install(&host.data)
 }
 
-/// Whether the previous run asked to reopen in the tray. Consumes the request.
-pub fn take_relaunch_minimized(data: &std::path::Path) -> bool {
-    std::fs::remove_file(data.join(RELAUNCH_MINIMIZED_FILE)).is_ok()
+/// An installer downloaded in the background. It waits on disk rather than in
+/// memory; the hash, kept in memory, proves it is still the verified download.
+struct Prepared {
+    version: String,
+    path: PathBuf,
+    sha256: [u8; 32],
+}
+
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+impl Prepared {
+    fn save(data: &Path, version: &str, bytes: &[u8]) -> Result<Self, String> {
+        let path = data.join(INSTALLER_FILE);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(Self {
+            version: version.into(),
+            path,
+            sha256: sha256(bytes),
+        })
+    }
+
+    /// The installer bytes, or None if the file is gone or no longer matches.
+    fn load(&self) -> Option<Vec<u8>> {
+        std::fs::read(&self.path)
+            .ok()
+            .filter(|bytes| sha256(bytes) == self.sha256)
+    }
+}
+
+/// Removes an installer left by a previous run, which no longer has its hash.
+pub fn discard_stale_installer(data: &Path) {
+    let _ = std::fs::remove_file(data.join(INSTALLER_FILE));
 }
 
 #[tauri::command]
@@ -106,8 +143,8 @@ pub fn update_channel(
 #[derive(Default)]
 pub struct Updates {
     pending: Mutex<Option<Update>>,
-    /// The verified installer of a background download, by version.
-    downloaded: Mutex<Option<(String, Vec<u8>)>>,
+    /// The verified installer of a background download.
+    downloaded: Mutex<Option<Prepared>>,
     /// Serializes background downloads: a repeated request waits for the one in
     /// flight and then reuses its installer instead of being refused.
     downloading: tauri::async_runtime::Mutex<()>,
@@ -129,18 +166,23 @@ impl Updates {
     }
 
     fn clear_download(&self) {
-        if let Ok(mut downloaded) = self.downloaded.lock() {
-            *downloaded = None;
+        if let Some(prepared) = self.downloaded.lock().ok().and_then(|mut d| d.take()) {
+            let _ = std::fs::remove_file(prepared.path);
         }
     }
 
+    fn prepared_version(&self) -> Option<String> {
+        let downloaded = self.downloaded.lock().ok()?;
+        downloaded.as_ref().map(|prepared| prepared.version.clone())
+    }
+
+    /// The verified installer for `version`, if one is downloaded and intact.
     fn downloaded_bytes(&self, version: &str) -> Option<Vec<u8>> {
-        self.downloaded
-            .lock()
-            .ok()?
+        let downloaded = self.downloaded.lock().ok()?;
+        downloaded
             .as_ref()
-            .filter(|(saved, _)| saved == version)
-            .map(|(_, bytes)| bytes.clone())
+            .filter(|prepared| prepared.version == version)?
+            .load()
     }
 
     fn pending_update(&self) -> Result<Update, String> {
@@ -182,8 +224,7 @@ pub async fn check_update(
     let details = update
         .as_ref()
         .map(|u| json!({"version": u.version, "notes": u.body}));
-    let version = update.as_ref().map(|u| u.version.as_str());
-    if version.is_none_or(|version| updates.downloaded_bytes(version).is_none()) {
+    if update.as_ref().map(|u| &u.version) != updates.prepared_version().as_ref() {
         updates.clear_download();
     }
     *updates
@@ -196,12 +237,15 @@ pub async fn check_update(
 /// Downloads and verifies the update found by the last check without installing it,
 /// so an automatic install later only has to run the installer. Returns its version.
 #[tauri::command]
-pub async fn download_update(updates: tauri::State<'_, Updates>) -> Result<String, String> {
+pub async fn download_update(
+    host: tauri::State<'_, Host>,
+    updates: tauri::State<'_, Updates>,
+) -> Result<String, String> {
     let _downloading = updates.downloading.lock().await;
     // Read the update only after any earlier download finished, so a request that
     // waited reuses that installer or downloads what the last check found.
     let mut update = updates.pending_update()?;
-    if updates.downloaded_bytes(&update.version).is_some() {
+    if updates.prepared_version().as_ref() == Some(&update.version) {
         return Ok(update.version);
     }
     update.timeout = Some(Duration::from_secs(30 * 60));
@@ -213,10 +257,11 @@ pub async fn download_update(updates: tauri::State<'_, Updates>) -> Result<Strin
     if updates.pending_update().map(|u| u.version) != Ok(update.version.clone()) {
         return Err("The update changed while downloading.".into());
     }
+    let prepared = Prepared::save(&host.data, &update.version, &bytes)?;
     *updates
         .downloaded
         .lock()
-        .map_err(|_| "Update state is unavailable.")? = Some((update.version.clone(), bytes));
+        .map_err(|_| "Update state is unavailable.")? = Some(prepared);
     Ok(update.version)
 }
 
@@ -263,7 +308,10 @@ pub async fn install_update(
         }
     };
     super::update_trace::append(&host.data, "download-verified");
-    let _ = app.emit("update-progress", json!({"phase": "waiting"}));
+    // Only a manual install waits for a reply; an automatic one gives up instead.
+    if !automatic {
+        let _ = app.emit("update-progress", json!({"phase": "waiting"}));
+    }
     let _lifecycle = host.lifecycle.lock().await;
     // /stop atomically refuses active turns. Retry only that refusal, preserving replies.
     loop {
@@ -282,22 +330,20 @@ pub async fn install_update(
     }
     super::update_trace::append(&host.data, "bridge-stopped-before-install");
     let _ = app.emit("update-progress", json!({"phase": "installing"}));
-    // An automatic install while Wisp sits in the tray goes back to the tray.
-    // Otherwise the installer reopens Wisp with this process's arguments,
-    // including --minimized after a launch with Windows; open on screen instead.
-    let relaunch_minimized = automatic && main_window_hidden(&app);
-    if relaunch_minimized {
-        let _ = std::fs::write(host.data.join(RELAUNCH_MINIMIZED_FILE), "");
-    } else {
-        super::native_shell::show_after_update(&host.data);
-    }
+    // An update that installs itself while Wisp sits in the tray goes back there;
+    // any other update reopens on screen, even after a launch with Windows.
+    super::native_shell::set_after_update(
+        &host.data,
+        if automatic && main_window_hidden(&app) {
+            AfterUpdate::Tray
+        } else {
+            AfterUpdate::Show
+        },
+    );
     // The NSIS hook also waits for the bridge process to finish releasing its files.
     if let Err(error) = update.install(bytes) {
-        super::native_shell::cancel_show_after_update(&host.data);
+        super::native_shell::cancel_after_update(&host.data);
         super::update_trace::append(&host.data, "installer-launch-failed");
-        if relaunch_minimized {
-            take_relaunch_minimized(&host.data);
-        }
         let _ = super::start_host(&host).await;
         return Err(error.to_string());
     }
@@ -332,31 +378,45 @@ mod tests {
         assert!(updates.begin().is_ok());
     }
 
-    #[test]
-    fn automatic_install_defaults_on_and_relaunch_marker_is_consumed_once() {
-        let dir = std::env::temp_dir().join(format!("wisp-auto-install-{}", std::process::id()));
+    fn temp_data(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wisp-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn automatic_install_defaults_on() {
+        let dir = temp_data("auto-install");
         assert!(read_auto_install(&dir).unwrap());
         std::fs::write(dir.join(AUTO_INSTALL_FILE), "off").unwrap();
         assert!(!read_auto_install(&dir).unwrap());
         std::fs::write(dir.join(AUTO_INSTALL_FILE), "maybe").unwrap();
         assert!(read_auto_install(&dir).is_err());
-
-        assert!(!take_relaunch_minimized(&dir));
-        std::fs::write(dir.join(RELAUNCH_MINIMIZED_FILE), "").unwrap();
-        assert!(take_relaunch_minimized(&dir));
-        assert!(!take_relaunch_minimized(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn downloaded_installers_only_match_their_version() {
+    fn downloaded_installers_wait_on_disk_and_only_match_their_version() {
+        let dir = temp_data("installer");
         let updates = Updates::default();
-        *updates.downloaded.lock().unwrap() = Some(("0.4.0".into(), vec![1, 2, 3]));
+        let prepared = Prepared::save(&dir, "0.4.0", &[1, 2, 3]).unwrap();
+        let path = prepared.path.clone();
+        *updates.downloaded.lock().unwrap() = Some(prepared);
         assert_eq!(updates.downloaded_bytes("0.4.0"), Some(vec![1, 2, 3]));
         assert_eq!(updates.downloaded_bytes("0.4.1"), None);
-        updates.clear_download();
+
+        // A file changed after verification is never handed to the installer.
+        std::fs::write(&path, [9, 9, 9]).unwrap();
         assert_eq!(updates.downloaded_bytes("0.4.0"), None);
+
+        updates.clear_download();
+        assert!(!path.exists());
+        assert_eq!(updates.prepared_version(), None);
+
+        Prepared::save(&dir, "0.4.0", &[1]).unwrap();
+        discard_stale_installer(&dir);
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
