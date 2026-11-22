@@ -190,13 +190,14 @@ end
 -- Register the saved Wisp guides again (WispAI's ADDON_LOADED, after
 -- Polestar has loaded), so a tab Polestar restores at login still has its
 -- guide. A guide that no longer registers is dropped from the saved list.
+-- Returns the count restored and "id: reason" for each one dropped.
 function ns.Integrations.RestorePolestarGuides()
     local polestar, _, lookup = api()
     local list = saved()
     if not polestar or not list then
-        return 0
+        return 0, {}
     end
-    local restored = 0
+    local restored, failures = 0, {}
     for i = #list, 1, -1 do
         local entry = list[i]
         local valid = type(entry) == "table"
@@ -204,20 +205,23 @@ function ns.Integrations.RestorePolestarGuides()
             and entry.id:match(ID_PATTERN)
             and type(entry.title) == "string"
             and type(entry.steps) == "table"
+        local err = not valid and "invalid saved guide" or nil
         if valid then
             plans[entry.id] = { title = entry.title, steps = entry.steps }
-            valid = pcall(register, polestar, lookup, entry.id)
+            valid, err = pcall(register, polestar, lookup, entry.id)
         end
         if valid then
             restored = restored + 1
         else
-            if type(entry) == "table" and type(entry.id) == "string" then
-                plans[entry.id] = nil
+            local id = type(entry) == "table" and type(entry.id) == "string" and entry.id or nil
+            if id then
+                plans[id] = nil
             end
+            failures[#failures + 1] = tostring(id or "?") .. ": " .. tostring(err)
             table.remove(list, i)
         end
     end
-    return restored
+    return restored, failures
 end
 
 -- args: { id?, title, steps = { { title?, note?, goals = { wire goal, ... } } }, open? }
@@ -247,7 +251,13 @@ function ns.Integrations.CreatePolestarGuide(args)
     local updated = false
     if previous then
         local replaced, reason = public.ReplaceSteps(guideId, steps)
-        assert(replaced, "Polestar could not update the open guide: " .. tostring(reason))
+        if not replaced then
+            -- The menu already holds the new guide while its tab keeps the old
+            -- steps: register the earlier plan again so both agree.
+            plans[id] = previous
+            pcall(register, polestar, lookup, id)
+            error("Polestar could not update the open guide: " .. tostring(reason), 0)
+        end
         updated = true
     end
     save(id, plans[id])

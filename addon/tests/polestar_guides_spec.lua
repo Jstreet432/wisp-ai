@@ -236,3 +236,35 @@ it("restores nothing without Polestar", function()
     assert.equals(0, env.ns.Integrations.RestorePolestarGuides())
     assert.equals(1, #env.ns.db.polestarGuides)
 end)
+
+it("puts the earlier guide back when Polestar cannot update the open one", function()
+    local env = helper.env()
+    setup(env)
+    local p = fakePolestar()
+    env.Polestar = p
+    local first = env.ns.Integrations.CreatePolestarGuide(chain())
+    p.API.ReplaceSteps = function()
+        return false, "busy"
+    end
+    local next = chain()
+    next.id = first.id
+    next.title = "Renamed"
+    local ok, err = pcall(env.ns.Integrations.CreatePolestarGuide, next)
+    assert.is_false(ok)
+    assert.is_truthy(tostring(err):find("could not update the open guide: busy", 1, true))
+    assert.equals("Thwarting Kolkar", p.guides[first.guideId].title)
+    assert.equals("Thwarting Kolkar", env.ns.db.polestarGuides[1].title)
+end)
+
+it("reports each saved guide it could not restore", function()
+    local env = helper.env()
+    setup(env)
+    env.ns.db.polestarGuides = {
+        { id = "g1", title = "Kept", steps = chain().steps },
+        { id = "Bad Id", title = "x", steps = {} },
+    }
+    env.Polestar = fakePolestar()
+    local restored, failures = env.ns.Integrations.RestorePolestarGuides()
+    assert.equals(1, restored)
+    assert.same({ "Bad Id: invalid saved guide" }, failures)
+end)

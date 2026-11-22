@@ -93,7 +93,13 @@ events:SetScript("OnEvent", function(_, event, name)
         ns.active = ns.db.activeChat
         -- Before PLAYER_LOGIN, when Polestar restores its tabs.
         if ns.Integrations.RestorePolestarGuides then
-            pcall(ns.Integrations.RestorePolestarGuides)
+            local ok, result, failures = pcall(ns.Integrations.RestorePolestarGuides)
+            if not ok then
+                failures = { tostring(result) }
+            end
+            for _, failure in ipairs(failures or {}) do
+                ns.Core.Log("Could not restore a Polestar guide (" .. failure .. ").")
+            end
         end
     elseif event == "PLAYER_LOGIN" then
         ns.UI.BuildUI()

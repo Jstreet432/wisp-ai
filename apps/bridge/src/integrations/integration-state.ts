@@ -19,6 +19,38 @@ const reportSchema = z.object({
     services: z.boolean(),
   }),
 });
+type AddonStatus = z.infer<typeof addonReport>['status'];
+// Why an addon that reported this status cannot be used.
+const addonStatusReasons: Partial<Record<AddonStatus, string>> = {
+  missing: 'The addon is not loaded.',
+  incompatible: 'This addon version is not supported.',
+  waiting: 'The addon has not finished initializing.',
+};
+// What to keep in mind about each usable addon's data.
+const availableReasons: Record<
+  'syndicator' | 'auctionator' | 'polestar',
+  Partial<Record<AddonStatus, string>>
+> = {
+  syndicator: {
+    ready: 'Saved inventory may be out of date.',
+    partial: 'Saved inventory may be out of date.',
+  },
+  auctionator: {
+    ready: 'Prices reflect the last scan. Their age is shown when available.',
+    partial: 'Prices reflect the last scan. Their age is shown when available.',
+  },
+  polestar: {
+    partial: 'Only the guide and step number are available in this Polestar version.',
+  },
+};
+function guideToolReason(status: AddonStatus | undefined) {
+  if (!status) {
+    return 'Waiting for WoW.';
+  }
+  return status === 'missing'
+    ? 'Install or enable Polestar.'
+    : 'Your installed Polestar does not offer its guide API.';
+}
 export class IntegrationState {
   lastSeen = 0;
   report?: z.infer<typeof reportSchema>;
@@ -97,19 +129,7 @@ export class IntegrationState {
         version: addon?.version,
         reason: !addon
           ? 'Open WoW and reload Wisp to check this addon.'
-          : addon.status === 'missing'
-            ? 'The addon is not loaded.'
-            : addon.status === 'incompatible'
-              ? 'This addon version is not supported.'
-              : addon.status === 'waiting'
-                ? 'The addon has not finished initializing.'
-                : id === 'syndicator'
-                  ? 'Saved inventory may be out of date.'
-                  : id === 'polestar'
-                    ? addon.status === 'partial'
-                      ? 'Only the guide and step number are available in this Polestar version.'
-                      : undefined
-                    : 'Prices reflect the last scan. Their age is shown when available.',
+          : (addonStatusReasons[addon.status] ?? availableReasons[id][addon.status]),
       });
     }
     const polestar = live ? this.report!.polestar : undefined;
@@ -117,13 +137,7 @@ export class IntegrationState {
     this.settings.availability.set('tool:create_guide', {
       available: guides,
       status: !polestar ? 'waiting' : guides ? 'ready' : 'unavailable',
-      reason: guides
-        ? undefined
-        : !polestar
-          ? 'Waiting for WoW.'
-          : polestar.status === 'missing'
-            ? 'Install or enable Polestar.'
-            : 'Your installed Polestar does not offer its guide API.',
+      reason: guides ? undefined : guideToolReason(polestar?.status),
     });
   }
 }
