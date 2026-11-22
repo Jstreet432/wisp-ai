@@ -284,6 +284,7 @@ ns.Locales.enUS = {
     ["message.toolInput"] = "Input",
     ["message.toolResult"] = "Result",
     ["message.you"] = "You",
+    ["message.attachedFrom"] = "Attached from {source}: {label}",
     ["message.notice"] = "Notice",
 
     -- Inline chat
@@ -300,6 +301,10 @@ ns.Locales.enUS = {
     ["inline.bindNotChanged"] = "Binding was not changed in combat.",
     ["inline.boundTo"] = "Inline chat: %s",
     ["inline.keyNotAssigned"] = "This key could not be assigned. Choose another combination.",
+    ["inline.reviewThis"] = "Review this",
+    ["inline.attachmentDefaultLabel"] = "Data",
+    ["inline.attachmentChip"] = "{source} · {label} · {size}",
+    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "Unavailable",

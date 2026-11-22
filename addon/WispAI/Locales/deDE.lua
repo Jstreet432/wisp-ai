@@ -271,6 +271,7 @@ ns.Locales.deDE = {
     ["message.toolInput"] = "Eingabe",
     ["message.toolResult"] = "Ergebnis",
     ["message.you"] = "Du",
+    ["message.attachedFrom"] = "Angehängt von {source}: {label}",
     ["message.notice"] = "Hinweis",
 
     -- Inline chat
@@ -287,6 +288,10 @@ ns.Locales.deDE = {
     ["inline.bindNotChanged"] = "Die Belegung wurde im Kampf nicht geändert.",
     ["inline.boundTo"] = "Inline-Chat: %s",
     ["inline.keyNotAssigned"] = "Diese Taste konnte nicht belegt werden. Wähl eine andere Kombination.",
+    ["inline.reviewThis"] = "Prüf das",
+    ["inline.attachmentDefaultLabel"] = "Daten",
+    ["inline.attachmentChip"] = "{source} · {label} · {size}",
+    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "Nicht verfügbar",

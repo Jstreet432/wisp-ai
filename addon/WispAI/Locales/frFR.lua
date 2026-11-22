@@ -271,6 +271,7 @@ ns.Locales.frFR = {
     ["message.toolInput"] = "Entrée",
     ["message.toolResult"] = "Résultat",
     ["message.you"] = "Vous",
+    ["message.attachedFrom"] = "Joint depuis {source} : {label}",
     ["message.notice"] = "Avis",
 
     -- Inline chat
@@ -287,6 +288,10 @@ ns.Locales.frFR = {
     ["inline.bindNotChanged"] = "Le raccourci n'a pas été modifié en combat.",
     ["inline.boundTo"] = "Discussion contextuelle : %s",
     ["inline.keyNotAssigned"] = "Impossible d'assigner cette touche. Choisissez une autre combinaison.",
+    ["inline.reviewThis"] = "Analyse ceci",
+    ["inline.attachmentDefaultLabel"] = "Données",
+    ["inline.attachmentChip"] = "{source} · {label} · {size}",
+    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "Indisponible",

@@ -271,6 +271,7 @@ ns.Locales.ruRU = {
     ["message.toolInput"] = "Ввод",
     ["message.toolResult"] = "Результат",
     ["message.you"] = "Вы",
+    ["message.attachedFrom"] = "Вложение из {source}: {label}",
     ["message.notice"] = "Уведомление",
 
     -- Inline chat
@@ -287,6 +288,10 @@ ns.Locales.ruRU = {
     ["inline.bindNotChanged"] = "Назначение не изменено: вы в бою.",
     ["inline.boundTo"] = "Встроенный чат: %s",
     ["inline.keyNotAssigned"] = "Не удалось назначить эту клавишу. Выберите другое сочетание.",
+    ["inline.reviewThis"] = "Посмотри это",
+    ["inline.attachmentDefaultLabel"] = "Данные",
+    ["inline.attachmentChip"] = "{source} · {label} · {size}",
+    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "Недоступно",

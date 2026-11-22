@@ -271,6 +271,7 @@ ns.Locales.esES = {
     ["message.toolInput"] = "Entrada",
     ["message.toolResult"] = "Resultado",
     ["message.you"] = "Tú",
+    ["message.attachedFrom"] = "Adjunto de {source}: {label}",
     ["message.notice"] = "Aviso",
 
     -- Inline chat
@@ -287,6 +288,10 @@ ns.Locales.esES = {
     ["inline.bindNotChanged"] = "No se cambió la tecla durante el combate.",
     ["inline.boundTo"] = "Chat en línea: %s",
     ["inline.keyNotAssigned"] = "No se pudo asignar esta tecla. Elige otra combinación.",
+    ["inline.reviewThis"] = "Revisa esto",
+    ["inline.attachmentDefaultLabel"] = "Datos",
+    ["inline.attachmentChip"] = "{source} · {label} · {size}",
+    ["inline.attachmentMore"] = "…",
 
     -- Panels
     ["panel.unavailable"] = "No disponible",
