@@ -106,7 +106,9 @@ pub struct Updates {
     pending: Mutex<Option<Update>>,
     /// The verified installer of a background download, by version.
     downloaded: Mutex<Option<(String, Vec<u8>)>>,
-    downloading: AtomicBool,
+    /// Serializes background downloads: a repeated request waits for the one in
+    /// flight and then reuses its installer instead of being refused.
+    downloading: tauri::async_runtime::Mutex<()>,
     busy: AtomicBool,
 }
 
@@ -193,15 +195,13 @@ pub async fn check_update(
 /// so an automatic install later only has to run the installer. Returns its version.
 #[tauri::command]
 pub async fn download_update(updates: tauri::State<'_, Updates>) -> Result<String, String> {
+    let _downloading = updates.downloading.lock().await;
+    // Read the update only after any earlier download finished, so a request that
+    // waited reuses that installer or downloads what the last check found.
     let mut update = updates.pending_update()?;
     if updates.downloaded_bytes(&update.version).is_some() {
         return Ok(update.version);
     }
-    updates
-        .downloading
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .map_err(|_| "The update is already downloading.".to_string())?;
-    let _downloading = Operation(&updates.downloading);
     update.timeout = Some(Duration::from_secs(30 * 60));
     let bytes = update
         .download(|_, _| {}, || {})
