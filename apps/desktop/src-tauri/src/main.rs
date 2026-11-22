@@ -885,10 +885,12 @@ fn main() {
                 .build(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 native_shell::disable_browser_shortcuts(&window);
-                // Consume the marker on every launch so it never outlives one relaunch.
-                let relaunch_minimized =
-                    updates::take_relaunch_minimized(&app.state::<Host>().data);
-                if !native_shell::started_minimized() && !relaunch_minimized {
+                let data = &app.state::<Host>().data;
+                // Read both post-update markers on every launch so neither
+                // outlives the one relaunch it was written for.
+                let start_hidden = native_shell::start_hidden(data);
+                let relaunch_minimized = updates::take_relaunch_minimized(data);
+                if !start_hidden && !relaunch_minimized {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
