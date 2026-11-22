@@ -40,7 +40,8 @@ local FONT_DIR = "Interface\\AddOns\\WispAI\\Fonts\\"
 local INTER = FONT_DIR .. "Inter-Medium.ttf"
 local INTER_STRONG = FONT_DIR .. "Inter-SemiBold.ttf"
 -- Inter covers Latin, Greek and Cyrillic. When the UI language uses CJK or
--- Hangul, text keeps the game font, and a failed Inter load falls back to it too.
+-- Hangul, UI chrome keeps the game font (Latin content still takes Inter, see
+-- interSupports), and a failed Inter load falls back to it too.
 local LOCALIZED_ONLY = { zhCN = true, zhTW = true, koKR = true }
 -- Game fonts for scripts the client's own font may lack. Every client ships
 -- them, so a language chosen in Settings renders even when the game runs in
@@ -64,8 +65,14 @@ local scriptFont -- face for CJK/Hangul text when the UI language differs from t
 local function latinScript(text)
     return not (text or ""):gsub("\226[\128\129][\128-\191]", ""):find("[\212-\255]")
 end
+--- True when `text` should take Inter. Latin text does in every UI language:
+--- the CJK faces (ARKai_T, bLEI00D) lack or badly space Latin-1 letters such as
+--- á, ó and ¿. Empty text (an edit box before typing) follows the UI language.
 local function interSupports(text)
-    return useInter and latinScript(text)
+    if text == nil or text == "" then
+        return useInter
+    end
+    return latinScript(text)
 end
 --- Soft shadow under Inter text: one pixel down-right in the palette's shade.
 local function softShadow(font)
@@ -73,6 +80,7 @@ local function softShadow(font)
     font:SetShadowColor(COLORS.shade[1], COLORS.shade[2], COLORS.shade[3], 0.6)
 end
 local fontRoles = {}
+local roleOf = {} -- role font object -> role
 -- Paints a role's font: Inter when the UI language allows it, otherwise the
 -- game font, swapped for the language's script font when the game lacks it.
 local function paintFont(role)
@@ -95,6 +103,7 @@ local function makeFont(name, path, size, fallback)
     end
     local role = { font = CreateFont(name), path = path, size = size, base = base }
     fontRoles[#fontRoles + 1] = role
+    roleOf[role.font] = role
     paintFont(role)
     return role.font
 end
@@ -115,18 +124,46 @@ local INTER_CHAT_SCALE = 0.85
 local function interSize(size)
     return math.max(8, math.floor(size * INTER_CHAT_SCALE + 0.5))
 end
+--- Puts `fontObject`'s face and shadow back on `font`. An explicit SetFont
+--- outlives a later SetFontObject, so leaving an override needs this.
+local function restoreFace(font, fontObject)
+    if type(fontObject) ~= "table" or not fontObject.GetFont then
+        return
+    end
+    local path, size, flags = fontObject:GetFont()
+    if path then
+        font:SetFont(path, size, flags or "")
+    end
+    if fontObject.GetShadowOffset then
+        local x, y = fontObject:GetShadowOffset()
+        if x then
+            font:SetShadowOffset(x, y)
+        end
+        local r, g, b, a = fontObject:GetShadowColor()
+        if r then
+            font:SetShadowColor(r, g, b, a)
+        end
+    end
+end
 --- Applies Inter at the player's chat size, or the chat font itself when Inter
---- cannot render `text` or the UI language is CJK/Hangul.
+--- cannot render `text` (or, for empty text, the UI language is CJK/Hangul).
 local function chatFont(font, text, strong)
     font:SetFontObject(ChatFontNormal)
     local _, size, flags = ChatFontNormal:GetFont()
+    local override = false
     if interSupports(text) then
-        if font:SetFont(strong and INTER_STRONG or INTER, interSize(size), flags) then
+        override = font:SetFont(strong and INTER_STRONG or INTER, interSize(size), flags)
+        if override then
             softShadow(font)
         end
     elseif scriptFont then
-        font:SetFont(scriptFont, size, flags)
+        override = font:SetFont(scriptFont, size, flags)
     end
+    if not override and font._wispOverride then
+        -- A recycled row that showed Inter text keeps it until reset explicitly.
+        restoreFace(font, ChatFontNormal)
+    end
+    font._wispOverride = override or nil
 end
 
 --- Sets fonts for the UI language `locale` (from `ns.ActiveLocale`). The window
@@ -220,6 +257,29 @@ local function setText(font, value)
         font._wispText = value
         font:SetText(value)
     end
+end
+--- Shows user or game text (chat titles, character and zone names, model output)
+--- in `fontObject`. A Wisp role painted in a CJK/Hangul face for the UI language
+--- still draws Latin text in its Inter face, so accented letters stay readable;
+--- other scripts keep the role's face, which covers the UI language.
+local function setContentText(font, text, fontObject)
+    text = text or ""
+    if fontObject then
+        font:SetFontObject(fontObject)
+        local role = roleOf[fontObject]
+        local inter = role
+            and not useInter
+            and interSupports(text)
+            and font:SetFont(role.path, role.size, "")
+        if inter then
+            softShadow(font)
+        elseif font._wispOverride then
+            -- A recycled string that showed Latin text keeps that Inter face.
+            restoreFace(font, fontObject)
+        end
+        font._wispOverride = inter or nil
+    end
+    setText(font, text)
 end
 --- One physical pixel in `region`'s units (UIParent's when omitted), so hairlines
 --- stay one crisp pixel at any UI scale. Uses the client's PixelUtil when present.
@@ -660,6 +720,7 @@ end
 ns.UI.Widgets = {
     Label = label,
     SetText = setText,
+    SetContentText = setContentText,
     Box = box,
     Button = button,
     Hover = hover,
