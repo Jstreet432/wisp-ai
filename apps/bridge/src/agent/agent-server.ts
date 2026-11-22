@@ -31,6 +31,7 @@ import type { WowheadSearch } from '../integrations/search/web-search.ts';
 import type { UsageTelemetry } from '../telemetry.ts';
 import { chooseChatModel } from '../chat/chat-model.ts';
 import { readLoadedItems, retriesItemLoading } from '../addon/item-loading.ts';
+import { searchGear } from '../integrations/gear-search.ts';
 import { characterIdentity, conversationTitle, queryCharacterSections } from '../chat/context.ts';
 export interface MemoryView {
   entries?: unknown[];
@@ -100,6 +101,8 @@ const inspectionTools = {
   combat: 'read_combat',
   resources: 'query_resources',
   compare_items: 'compare_items',
+  search_armor: 'search_armor',
+  search_weapons: 'search_weapons',
   auctions: 'inspect_auctions',
   macros: 'inspect_macros',
   map: 'inspect_map',
@@ -492,7 +495,7 @@ export function createAgentApp(deps: AgentDependencies) {
           stateRequest.refresh,
         );
       }
-      const read = () =>
+      const request = (gameInspection = inspection as unknown) =>
         pending.request(
           {
             chat: chat.id,
@@ -501,13 +504,30 @@ export function createAgentApp(deps: AgentDependencies) {
               ? {
                   action: { ...action, expectedCharacter: expectedCharacter(chat.characterKey) },
                 }
-              : inspection
-                ? { inspection }
+              : gameInspection
+                ? { inspection: gameInspection }
                 : {}),
           },
           abort,
         );
-      return inspection && retriesItemLoading(inspection) ? readLoadedItems(read, abort) : read();
+      if (inspection?.kind === 'search_armor' || inspection?.kind === 'search_weapons') {
+        if (
+          !capabilitySettings.enabled('mcp:everloot') ||
+          !capabilitySettings.enabled('mcp_tool:everloot:item_categories')
+        ) {
+          throw new Error(
+            'Gear search needs the Everloot integration and its item categories tool, which are off in Settings',
+          );
+        }
+        return searchGear(
+          inspection,
+          (candidates) => readLoadedItems(() => request(candidates), abort),
+          { signal: abort },
+        );
+      }
+      return inspection && retriesItemLoading(inspection)
+        ? readLoadedItems(() => request(), abort)
+        : request();
     });
   game('/state');
   game('/inspect');
