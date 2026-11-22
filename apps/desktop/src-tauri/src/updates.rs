@@ -41,7 +41,9 @@ const AUTO_INSTALL_FILE: &str = "update-auto-install.txt";
 /// relaunched app goes back to the tray instead of opening on screen.
 const RELAUNCH_MINIMIZED_FILE: &str = "update-relaunch-minimized";
 const BUSY_TURN: &str = "Wait for the active turn before stopping Wisp";
-/// Returned when an automatic install finds a reply running; the app retries later.
+const BUSY_GAME: &str = "Wait for WoW to disconnect before stopping Wisp";
+/// Returned when an automatic install finds a reply running or WoW connected; the
+/// app retries later.
 const AUTOMATIC_BUSY: &str = "Wisp is busy; the update will install later.";
 
 fn read_auto_install(data: &std::path::Path) -> Result<bool, String> {
@@ -265,9 +267,11 @@ pub async fn install_update(
     let _lifecycle = host.lifecycle.lock().await;
     // /stop atomically refuses active turns. Retry only that refusal, preserving replies.
     loop {
-        match super::stop_host(&host).await {
+        match super::stop_host_when(&host, automatic).await {
             Ok(()) => break,
-            Err(error) if error == BUSY_TURN && automatic => return Err(AUTOMATIC_BUSY.into()),
+            Err(error) if automatic && (error == BUSY_TURN || error == BUSY_GAME) => {
+                return Err(AUTOMATIC_BUSY.into())
+            }
             Err(error) if error == BUSY_TURN => {
                 tauri::async_runtime::spawn_blocking(|| std::thread::sleep(Duration::from_secs(1)))
                     .await

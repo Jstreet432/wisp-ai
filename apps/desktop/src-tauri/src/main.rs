@@ -347,9 +347,20 @@ async fn start_host(host: &Host) -> Result<(), String> {
 }
 
 async fn stop_host(host: &Host) -> Result<(), String> {
+    stop_host_when(host, false).await
+}
+
+/// Stops the bridge; with `unless_game_connected` the bridge also refuses while WoW
+/// is connected, checked atomically with its active-turn refusal.
+async fn stop_host_when(host: &Host, unless_game_connected: bool) -> Result<(), String> {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let body = if unless_game_connected {
+        json!({ "unlessGameConnected": true })
+    } else {
+        json!({})
+    };
     loop {
-        match host.request("POST", "/stop", json!({})).await {
+        match host.request("POST", "/stop", body.clone()).await {
             Ok(_) => break,
             Err(error)
                 if error == "The Wisp service is not running."

@@ -29,6 +29,8 @@ export const wowTransportInput = z.discriminatedUnion('action', [
   z.object({ action: z.literal('pause') }),
   z.object({ action: z.literal('resume'), wow: z.string().min(1).optional() }),
 ]);
+// Called by the Rust host before it stops the bridge; not part of the webview contract.
+const stopInput = z.object({ unlessGameConnected: z.boolean().optional() });
 interface DesktopDependencies {
   auth: ChatGPTAuth;
   connections: ModelConnections;
@@ -200,9 +202,13 @@ export function createDesktopApp(deps: DesktopDependencies) {
       await deps.setWowTransport(c.req.valid('json'));
       return c.json(ok);
     })
-    .post('/stop', (c) => {
+    .post('/stop', json(stopInput), (c) => {
       if (deps.getChats().some(isWorking)) {
         throw Error('Wait for the active turn before stopping Wisp');
+      }
+      // Automatic app updates must never stop the bridge under a running game.
+      if (c.req.valid('json').unlessGameConnected && deps.getStatus().gameConnected) {
+        throw Error('Wait for WoW to disconnect before stopping Wisp');
       }
       deps.requestStop();
       return c.json(ok);
