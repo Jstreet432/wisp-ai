@@ -180,6 +180,35 @@ test.each(['openrouter', 'gateway', 'compatible'] as const)(
   },
 );
 
+test('anthropic discovery marks returned Claude models as supporting tools', async () => {
+  const { manager } = await fixture(async () =>
+    Response.json({
+      data: [
+        {
+          type: 'model',
+          id: 'claude-sonnet-4-6',
+          display_name: 'Claude Sonnet 4.6',
+          max_input_tokens: 1000000,
+        },
+      ],
+    }),
+  );
+  const found = await manager.discover({
+    provider: 'anthropic',
+    name: 'Anthropic / Claude',
+    apiKey: 'key',
+  });
+  const { models } = desktopRoutes['/connections/discover'].output.parse(found);
+  expect(models).toEqual([
+    expect.objectContaining({
+      id: 'claude-sonnet-4-6',
+      name: 'Claude Sonnet 4.6',
+      contextWindow: 1000000,
+      supportsTools: true,
+    }),
+  ]);
+});
+
 test('validates endpoints, credentials, unique model IDs and context capacity', async () => {
   const { manager } = await fixture();
   for (const baseURL of [

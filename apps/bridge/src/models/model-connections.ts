@@ -314,7 +314,9 @@ export class ModelConnections implements ModelCatalog {
         ? m.supported_parameters.includes('tools')
         : input.provider === 'gateway' && Array.isArray(m.tags) && m.tags.includes('tool-use')
           ? true
-          : undefined;
+          : input.provider === 'anthropic'
+            ? true
+            : undefined;
       const model = discoveredConnectionModel.safeParse({
         id,
         name:
