@@ -42,10 +42,6 @@ test('release-it archives notes, commits synchronized versions and ignores night
     '[[package]]\nname = "wisp"\nversion = "0.0.7"\n',
   );
   await writeFile(
-    join(root, 'README.md'),
-    'Download the [Windows x64 installer](https://github.com/fedeya/wisp-ai/releases/download/v0.0.7/WispAI-0.0.7-windows-x64-setup.exe).\n',
-  );
-  await writeFile(
     join(root, 'releases/next.md'),
     '# A better companion\n\n- Reconnect without restarting.\n',
   );
@@ -78,8 +74,5 @@ test('release-it archives notes, commits synchronized versions and ignores night
   expect(git('tag', '--list', 'v0.0.8').trim()).toBe('v0.0.8');
   expect(git('show', 'HEAD:releases/0.0.8.md')).toContain('Reconnect without restarting.');
   expect(git('show', 'HEAD:apps/desktop/package.json')).toContain('"version":"0.0.8"');
-  expect(git('show', 'HEAD:README.md')).toContain(
-    '/releases/download/v0.0.8/WispAI-0.0.8-windows-x64-setup.exe',
-  );
   expect(git('status', '--porcelain')).toBe('?? unrelated.txt\n');
 }, 180000);

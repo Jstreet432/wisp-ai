@@ -77,12 +77,6 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+(-nightly\.\d+\.\d+)?$') { throw 'Expected a stable or nightly release version.' }
           if ($version -ne $desktopVersion -or $version -ne $tauriVersion -or $version -ne $cargoVersion) { throw 'App versions must match.' }
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Release tag must match app version.' }
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $version -notmatch '-nightly\.') {
-            $readme = Get-Content README.md -Raw
-            if ($readme -notmatch [regex]::Escape("/releases/download/v$version/WispAI-$version-windows-x64-setup.exe")) {
-              throw 'README.md installer link must match release version.'
-            }
-          }
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm ui:build
       - name: Fingerprint native executable inputs

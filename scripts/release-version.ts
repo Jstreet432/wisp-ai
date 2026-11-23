@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { releaseChannel } from '@wisp/releases';
 
 export async function syncVersion(version: string, root = process.cwd()) {
-  const channel = releaseChannel(version);
+  releaseChannel(version);
   const paths = ['package.json'];
   for (const group of ['apps', 'packages']) {
     for (const entry of await readdir(resolve(root, group), { withFileTypes: true })) {
@@ -37,19 +37,6 @@ export async function syncVersion(version: string, root = process.cwd()) {
       `$1${version}"`,
     ),
   );
-  if (channel === 'stable') {
-    const readme = resolve(root, 'README.md');
-    const content = await readFile(readme, 'utf8');
-    const installerPath = `/releases/download/v${version}/WispAI-${version}-windows-x64-setup.exe`;
-    const updated = content.replace(
-      /\/releases\/download\/v\d+\.\d+\.\d+\/WispAI-\d+\.\d+\.\d+-windows-x64-setup\.exe/,
-      installerPath,
-    );
-    if (updated === content && !content.includes(installerPath)) {
-      throw Error('README.md is missing the Windows x64 installer download link.');
-    }
-    await writeFile(readme, updated);
-  }
 }
 export function nightlyBuildVersion(stable: string, run: string, attempt: string) {
   if (!/^\d+\.\d+\.\d+$/.test(stable) || !/^\d+$/.test(run) || !/^\d+$/.test(attempt)) {

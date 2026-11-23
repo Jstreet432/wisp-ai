@@ -41,10 +41,6 @@ test('stable preparation consumes user notes once and synchronizes all app versi
     '[[package]]\nname = "other"\nversion = "1.2.3"\n\n[[package]]\nname = "wisp"\nversion = "0.0.7"\n',
   );
   await writeFile(
-    join(root, 'README.md'),
-    'Download the [Windows x64 installer](https://github.com/fedeya/wisp-ai/releases/download/v0.0.7/WispAI-0.0.7-windows-x64-setup.exe).\n',
-  );
-  await writeFile(
     join(root, 'releases/next.md'),
     '# Better adventures\n\n## Fixed\n\n- Reconnect without restarting.\n<!-- internal -->',
   );
@@ -57,13 +53,6 @@ test('stable preparation consumes user notes once and synchronizes all app versi
   const lock = await readFile(join(root, 'apps/desktop/src-tauri/Cargo.lock'), 'utf8');
   expect(lock).toContain('name = "wisp"\nversion = "0.0.8"');
   expect(lock).toContain('name = "other"\nversion = "1.2.3"');
-  expect(await readFile(join(root, 'README.md'), 'utf8')).toContain(
-    '/releases/download/v0.0.8/WispAI-0.0.8-windows-x64-setup.exe',
-  );
-  await syncVersion('0.0.9-nightly.123.1', root);
-  expect(await readFile(join(root, 'README.md'), 'utf8')).toContain(
-    '/releases/download/v0.0.8/WispAI-0.0.8-windows-x64-setup.exe',
-  );
   expect(validateNotes('# Next\n\n<!-- comment -->\n\n## New\n\n- Item\n')).toBe(
     '# Next\n\n## New\n\n- Item\n',
   );
