@@ -314,7 +314,7 @@ export class ModelConnections implements ModelCatalog {
         ? m.supported_parameters.includes('tools')
         : input.provider === 'gateway' && Array.isArray(m.tags) && m.tags.includes('tool-use')
           ? true
-          : input.provider === 'anthropic'
+          : input.provider === 'anthropic' && baseURL === 'https://api.anthropic.com/v1'
             ? true
             : undefined;
       const model = discoveredConnectionModel.safeParse({

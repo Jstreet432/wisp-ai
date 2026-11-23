@@ -180,7 +180,7 @@ test.each(['openrouter', 'gateway', 'compatible'] as const)(
   },
 );
 
-test('anthropic discovery marks returned Claude models as supporting tools', async () => {
+test('anthropic discovery marks native models as supporting tools', async () => {
   const { manager } = await fixture(async () =>
     Response.json({
       data: [
@@ -207,6 +207,14 @@ test('anthropic discovery marks returned Claude models as supporting tools', asy
       supportsTools: true,
     }),
   ]);
+  const custom = await manager.discover({
+    provider: 'anthropic',
+    name: 'Custom Anthropic Proxy',
+    apiKey: 'key',
+    baseURL: 'https://proxy.example.com/v1',
+  });
+  const { models: customModels } = desktopRoutes['/connections/discover'].output.parse(custom);
+  expect(customModels[0]?.supportsTools).toBeUndefined();
 });
 
 test('validates endpoints, credentials, unique model IDs and context capacity', async () => {
